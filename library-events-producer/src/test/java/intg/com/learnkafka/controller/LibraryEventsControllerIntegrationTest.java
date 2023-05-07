@@ -1,5 +1,6 @@
 package com.learnkafka.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.util.TestUtil;
@@ -59,9 +60,10 @@ public class LibraryEventsControllerIntegrationTest {
 
     @Test
     @Timeout(5)
-    void postLibraryEvent() throws InterruptedException {
+    void postLibraryEvent() throws InterruptedException, JsonProcessingException {
         //given
         LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
+        System.out.println("libraryEvent : " + objectMapper.writeValueAsString(libraryEvent));
         HttpHeaders headers = new HttpHeaders();
         headers.set("content-type", MediaType.APPLICATION_JSON.toString());
         HttpEntity<LibraryEvent> request = new HttpEntity<>(libraryEvent, headers);
@@ -87,9 +89,10 @@ public class LibraryEventsControllerIntegrationTest {
 
     @Test
     @Timeout(5)
-    void putLibraryEvent() throws InterruptedException {
+    void putLibraryEvent() throws InterruptedException, JsonProcessingException {
         //given
         var libraryEventUpdate = TestUtil.libraryEventRecordUpdate();
+        System.out.println("libraryEvent : " + objectMapper.writeValueAsString(libraryEventUpdate));
         HttpHeaders headers = new HttpHeaders();
         headers.set("content-type", MediaType.APPLICATION_JSON.toString());
         HttpEntity<LibraryEvent> request = new HttpEntity<>(libraryEventUpdate, headers);
