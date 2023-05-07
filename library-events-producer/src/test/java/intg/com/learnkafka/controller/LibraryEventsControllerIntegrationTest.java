@@ -60,7 +60,7 @@ public class LibraryEventsControllerIntegrationTest {
 
     @Test
     @Timeout(5)
-    void postLibraryEvent() throws InterruptedException, JsonProcessingException {
+    void postLibraryEvent() throws JsonProcessingException {
         //given
         LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
         System.out.println("libraryEvent : " + objectMapper.writeValueAsString(libraryEvent));
@@ -89,7 +89,7 @@ public class LibraryEventsControllerIntegrationTest {
 
     @Test
     @Timeout(5)
-    void putLibraryEvent() throws InterruptedException, JsonProcessingException {
+    void putLibraryEvent() throws JsonProcessingException {
         //given
         var libraryEventUpdate = TestUtil.libraryEventRecordUpdate();
         System.out.println("libraryEvent : " + objectMapper.writeValueAsString(libraryEventUpdate));
