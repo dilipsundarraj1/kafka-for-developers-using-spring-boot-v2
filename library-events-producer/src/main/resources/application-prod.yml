@@ -1,0 +1,10 @@
+spring:
+#The "config.activate.on-profile" property is not mandatory.
+#  config:
+#    activate:
+#      on-profile: prod
+  kafka:
+    producer:
+      bootstrap-servers: localhost:9092, localhost:9093
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer

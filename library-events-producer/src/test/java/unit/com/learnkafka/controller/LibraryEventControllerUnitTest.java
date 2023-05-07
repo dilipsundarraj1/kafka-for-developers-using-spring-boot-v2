@@ -1,7 +1,7 @@
 package com.learnkafka.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.learnkafka.domain.LibraryEventRecord;
+import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.producer.LibraryEventProducer;
 import com.learnkafka.util.TestUtil;
 import org.junit.jupiter.api.Test;
@@ -35,10 +35,10 @@ public class LibraryEventControllerUnitTest {
     void postLibraryEvent() throws Exception {
         //given
 
-        LibraryEventRecord libraryEventRecord = TestUtil.libraryEventRecord();
+        LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
 
-        String json = objectMapper.writeValueAsString(libraryEventRecord);
-        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEventRecord.class))).thenReturn(null);
+        String json = objectMapper.writeValueAsString(libraryEvent);
+        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEvent.class))).thenReturn(null);
 
         //expect
         mockMvc.perform(post("/v1/libraryevent")
@@ -52,10 +52,10 @@ public class LibraryEventControllerUnitTest {
     void postLibraryEvent_4xx() throws Exception {
         //given
 
-        LibraryEventRecord libraryEventRecord = TestUtil.libraryEventRecordWithInvalidBook();
+        LibraryEvent libraryEvent = TestUtil.libraryEventRecordWithInvalidBook();
 
-        String json = objectMapper.writeValueAsString(libraryEventRecord);
-        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEventRecord.class))).thenReturn(null);
+        String json = objectMapper.writeValueAsString(libraryEvent);
+        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEvent.class))).thenReturn(null);
         //expect
         String expectedErrorMessage = "book.bookId - must not be null, book.bookName - must not be blank";
         mockMvc.perform(post("/v1/libraryevent")
@@ -73,7 +73,7 @@ public class LibraryEventControllerUnitTest {
 
 
         String json = objectMapper.writeValueAsString(TestUtil.libraryEventRecordUpdate());
-        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEventRecord.class))).thenReturn(null);
+        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEvent.class))).thenReturn(null);
 
         //expect
         mockMvc.perform(
@@ -90,7 +90,7 @@ public class LibraryEventControllerUnitTest {
         //given
 
         String json = objectMapper.writeValueAsString(TestUtil.libraryEventRecordUpdateWithNullLibraryEventId());
-        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEventRecord.class))).thenReturn(null);
+        when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEvent.class))).thenReturn(null);
 
         //expect
         mockMvc.perform(

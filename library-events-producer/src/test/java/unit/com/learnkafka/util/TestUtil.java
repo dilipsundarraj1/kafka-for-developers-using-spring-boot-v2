@@ -2,58 +2,58 @@ package com.learnkafka.util;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.learnkafka.domain.BookRecord;
-import com.learnkafka.domain.LibraryEventRecord;
+import com.learnkafka.domain.Book;
+import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.domain.LibraryEventType;
 
 public class TestUtil {
 
-    public static BookRecord bookRecord(){
+    public static Book bookRecord(){
 
-        return new BookRecord(123, "Dilip","Kafka Using Spring Boot" );
+        return new Book(123, "Dilip","Kafka Using Spring Boot" );
     }
 
-    public static BookRecord bookRecordWithInvalidValues(){
+    public static Book bookRecordWithInvalidValues(){
 
-        return new BookRecord(null, "","Kafka Using Spring Boot" );
+        return new Book(null, "","Kafka Using Spring Boot" );
     }
 
-    public static LibraryEventRecord libraryEventRecord(){
+    public static LibraryEvent libraryEventRecord(){
 
         return
-                new LibraryEventRecord(null,
+                new LibraryEvent(null,
                         LibraryEventType.NEW,
                         bookRecord());
     }
 
-    public static LibraryEventRecord libraryEventRecordUpdate(){
+    public static LibraryEvent libraryEventRecordUpdate(){
 
         return
-                new LibraryEventRecord(123,
+                new LibraryEvent(123,
                         LibraryEventType.UPDATE,
                         bookRecord());
     }
 
-    public static LibraryEventRecord libraryEventRecordUpdateWithNullLibraryEventId(){
+    public static LibraryEvent libraryEventRecordUpdateWithNullLibraryEventId(){
 
         return
-                new LibraryEventRecord(null,
+                new LibraryEvent(null,
                         LibraryEventType.UPDATE,
                         bookRecord());
     }
 
-    public static LibraryEventRecord libraryEventRecordWithInvalidBook(){
+    public static LibraryEvent libraryEventRecordWithInvalidBook(){
 
         return
-                new LibraryEventRecord(null,
+                new LibraryEvent(null,
                         LibraryEventType.NEW,
                         bookRecordWithInvalidValues());
     }
 
-    public static LibraryEventRecord parseLibraryEventRecord(ObjectMapper objectMapper , String json){
+    public static LibraryEvent parseLibraryEventRecord(ObjectMapper objectMapper , String json){
 
         try {
-            return  objectMapper.readValue(json, LibraryEventRecord.class);
+            return  objectMapper.readValue(json, LibraryEvent.class);
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }

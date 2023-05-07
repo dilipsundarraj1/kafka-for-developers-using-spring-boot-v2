@@ -2,7 +2,7 @@ package com.learnkafka.producer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.learnkafka.domain.LibraryEventRecord;
+import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.util.TestUtil;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
@@ -49,11 +49,11 @@ public class LibraryEventProducerUnitTest {
     @Test
     void sendLibraryEvent_Approach2_success() throws JsonProcessingException, ExecutionException, InterruptedException {
         //given
-        LibraryEventRecord libraryEventRecord = TestUtil.libraryEventRecord();
-        String record = objectMapper.writeValueAsString(libraryEventRecord);
+        LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
+        String record = objectMapper.writeValueAsString(libraryEvent);
 
 
-        ProducerRecord<Integer, String> producerRecord = new ProducerRecord("library-events", libraryEventRecord.libraryEventId(),record );
+        ProducerRecord<Integer, String> producerRecord = new ProducerRecord("library-events", libraryEvent.libraryEventId(),record );
         RecordMetadata recordMetadata = new RecordMetadata(new TopicPartition("library-events", 1),
                 1,1,System.currentTimeMillis(), 1, 2);
         SendResult<Integer, String> sendResult = new SendResult<Integer, String>(producerRecord,recordMetadata);
@@ -62,7 +62,7 @@ public class LibraryEventProducerUnitTest {
         when(kafkaTemplate.send(isA(ProducerRecord.class))).thenReturn(future);
         //when
 
-        var completableFuture = eventProducer.sendLibraryEvent_Approach2(libraryEventRecord);
+        var completableFuture = eventProducer.sendLibraryEvent_Approach2(libraryEvent);
 
         //then
         SendResult<Integer,String> sendResult1 = completableFuture.get();

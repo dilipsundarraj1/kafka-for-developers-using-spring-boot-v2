@@ -1,7 +1,7 @@
 package com.learnkafka.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.learnkafka.domain.LibraryEventRecord;
+import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.producer.LibraryEventProducer;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +21,7 @@ public class LibraryEventsController {
     LibraryEventProducer libraryEventProducer;
 
     @PostMapping("/v1/libraryevent")
-    public ResponseEntity<LibraryEventRecord> postLibraryEvent(@RequestBody @Valid LibraryEventRecord libraryEvent) throws JsonProcessingException {
+    public ResponseEntity<LibraryEvent> postLibraryEvent(@RequestBody @Valid LibraryEvent libraryEvent) throws JsonProcessingException {
 
         //invoke kafka producer
         libraryEventProducer.sendLibraryEvent_Approach2(libraryEvent);
@@ -31,7 +31,7 @@ public class LibraryEventsController {
 
     //PUT
     @PutMapping("/v1/libraryevent")
-    public ResponseEntity<?> putLibraryEvent(@RequestBody @Valid LibraryEventRecord libraryEvent) throws JsonProcessingException {
+    public ResponseEntity<?> putLibraryEvent(@RequestBody @Valid LibraryEvent libraryEvent) throws JsonProcessingException {
 
         log.info("LibraryEvent : {} ",libraryEvent );
         if(libraryEvent.libraryEventId()==null){

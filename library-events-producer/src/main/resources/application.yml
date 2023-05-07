@@ -21,6 +21,8 @@ spring:
       properties:
         bootstrap.servers: localhost:9092,localhost:9093,localhost:9094
 ---
+
+#Environment Variables in Run Configurations=spring.profiles.active=ssl
 spring:
   config:
     activate:
@@ -72,14 +74,3 @@ spring:
         security:
           protocol: SSL
         ssl.endpoint.identification.algorithm:
-
----
-spring:
-  config:
-    activate:
-      on-profile: prod
-  kafka:
-    producer:
-      bootstrap-servers: prod:9092
-      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer

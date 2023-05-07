@@ -1,7 +1,7 @@
 package com.learnkafka.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.learnkafka.domain.LibraryEventRecord;
+import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.util.TestUtil;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -61,13 +61,13 @@ public class LibraryEventsControllerIntegrationTest {
     @Timeout(5)
     void postLibraryEvent() throws InterruptedException {
         //given
-        LibraryEventRecord libraryEventRecord = TestUtil.libraryEventRecord();
+        LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
         HttpHeaders headers = new HttpHeaders();
         headers.set("content-type", MediaType.APPLICATION_JSON.toString());
-        HttpEntity<LibraryEventRecord> request = new HttpEntity<>(libraryEventRecord, headers);
+        HttpEntity<LibraryEvent> request = new HttpEntity<>(libraryEvent, headers);
 
         //when
-        ResponseEntity<LibraryEventRecord> responseEntity = restTemplate.exchange("/v1/libraryevent", HttpMethod.POST, request, LibraryEventRecord.class);
+        ResponseEntity<LibraryEvent> responseEntity = restTemplate.exchange("/v1/libraryevent", HttpMethod.POST, request, LibraryEvent.class);
 
         //then
         assertEquals(HttpStatus.CREATED, responseEntity.getStatusCode());
@@ -78,7 +78,7 @@ public class LibraryEventsControllerIntegrationTest {
         assert consumerRecords.count() == 1;
         consumerRecords.forEach(record -> {
             var libraryEventActual = TestUtil.parseLibraryEventRecord(objectMapper, record.value());
-            assertEquals(libraryEventRecord, libraryEventActual);
+            assertEquals(libraryEvent, libraryEventActual);
 
         });
 
@@ -92,11 +92,11 @@ public class LibraryEventsControllerIntegrationTest {
         var libraryEventUpdate = TestUtil.libraryEventRecordUpdate();
         HttpHeaders headers = new HttpHeaders();
         headers.set("content-type", MediaType.APPLICATION_JSON.toString());
-        HttpEntity<LibraryEventRecord> request = new HttpEntity<>(libraryEventUpdate, headers);
+        HttpEntity<LibraryEvent> request = new HttpEntity<>(libraryEventUpdate, headers);
 
 
         //when
-        ResponseEntity<LibraryEventRecord> responseEntity = restTemplate.exchange("/v1/libraryevent", HttpMethod.PUT, request, LibraryEventRecord.class);
+        ResponseEntity<LibraryEvent> responseEntity = restTemplate.exchange("/v1/libraryevent", HttpMethod.PUT, request, LibraryEvent.class);
 
         //then
         assertEquals(HttpStatus.OK, responseEntity.getStatusCode());
