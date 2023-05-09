@@ -7,6 +7,7 @@ spring:
     activate:
       on-profile: local
   kafka:
+    topic:  library-events
     template:
       default-topic: library-events
     producer:
@@ -28,6 +29,7 @@ spring:
     activate:
       on-profile: ssl
   kafka:
+    topic:  library-events
     template:
       default-topic: library-events
     producer:
