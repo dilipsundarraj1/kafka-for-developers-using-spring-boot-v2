@@ -26,6 +26,14 @@ public class TestUtil {
                         bookRecord());
     }
 
+    public static LibraryEvent newLibraryEventRecordWithLibraryEventId(){
+
+        return
+                new LibraryEvent(123,
+                        LibraryEventType.NEW,
+                        bookRecord());
+    }
+
     public static LibraryEvent libraryEventRecordUpdate(){
 
         return

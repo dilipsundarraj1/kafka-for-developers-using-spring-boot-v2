@@ -101,4 +101,22 @@ public class LibraryEventControllerUnitTest {
         .andExpect(content().string("Please pass the LibraryEventId"));
 
     }
+
+    @Test
+    void updateLibraryEvent_withNullInvalidEventType() throws Exception {
+
+        //given
+
+        String json = objectMapper.writeValueAsString(TestUtil.newLibraryEventRecordWithLibraryEventId());
+        //when(libraryEventProducer.sendLibraryEvent_Approach2(isA(LibraryEvent.class))).thenReturn(null);
+
+        //expect
+        mockMvc.perform(
+                        put("/v1/libraryevent")
+                                .content(json)
+                                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().is4xxClientError())
+                .andExpect(content().string("Only UPDATE event type is supported"));
+
+    }
 }
