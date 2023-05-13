@@ -72,6 +72,8 @@ public class LibraryEventsControllerIntegrationTest {
         //then
         assertEquals(HttpStatus.CREATED, responseEntity.getStatusCode());
 
+        //Instantiate a consumer
+        // Read the record , assert the count and parse the record and assert on it.
 
         ConsumerRecords<Integer, String> consumerRecords = KafkaTestUtils.getRecords(consumer);
         //Thread.sleep(3000);
