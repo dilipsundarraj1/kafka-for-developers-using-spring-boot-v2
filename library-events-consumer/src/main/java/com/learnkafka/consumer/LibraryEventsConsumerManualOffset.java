@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 public class LibraryEventsConsumerManualOffset implements AcknowledgingMessageListener<Integer,String> {
 
     @Override
-    @KafkaListener(topics = {"library-event s"})
+    @KafkaListener(topics = {"library-events"})
     public void onMessage(ConsumerRecord<Integer, String> consumerRecord, Acknowledgment acknowledgment) {
         log.info("ConsumerRecord in Manual Offset Consumer: {} ", consumerRecord );
         acknowledgment.acknowledge();

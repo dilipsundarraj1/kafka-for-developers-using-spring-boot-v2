@@ -81,6 +81,22 @@ a-abc
 b-bus
 ```
 
+### Consume Messages With Headers
+
+```
+docker exec --interactive --tty kafka1  \
+kafka-console-consumer --bootstrap-server kafka1:19092 \
+                       --topic library-events.DLT \
+                       --property "print.headers=true" --property "print.timestamp=true" 
+```
+
+- Example Messages:
+
+```
+a-abc
+b-bus
+```
+
 ### Set up a Kafka Cluster with 3 brokers
 
 - Run this command and this will spin up a kafka cluster with 3 brokers.

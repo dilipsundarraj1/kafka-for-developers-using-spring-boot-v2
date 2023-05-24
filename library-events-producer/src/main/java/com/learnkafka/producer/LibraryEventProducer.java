@@ -56,9 +56,7 @@ public class LibraryEventProducer {
         String value = objectMapper.writeValueAsString(libraryEvent);
 
         ProducerRecord<Integer, String> producerRecord = buildProducerRecord(key, value, topic);
-
         var completableFuture = kafkaTemplate.send(producerRecord);
-
         return completableFuture
                 .whenComplete((sendResult, throwable) -> {
                     if (throwable != null) {
@@ -100,11 +98,11 @@ public class LibraryEventProducer {
 
     private void handleFailure(Integer key, String value, Throwable ex) {
         log.error("Error Sending the Message and the exception is {}", ex.getMessage());
-        try {
-            throw ex;
-        } catch (Throwable throwable) {
-            log.error("Error in OnFailure: {}", throwable.getMessage());
-        }
+//        try {
+//            throw ex;
+//        } catch (Throwable throwable) {
+//            log.error("Error in OnFailure: {}", throwable.getMessage());
+//        }
 
 
     }
