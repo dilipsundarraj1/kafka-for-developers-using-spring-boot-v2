@@ -11,10 +11,21 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       ssl:
-        trust-store-location: file:/System/Volumes/Data/Dilip/udemy/kafka-for-developers-using-spring-boot/ssl/kafka.producer.truststore.jks
+        trust-store-location: file:/System/Volumes/Data/Dilip/udemy/udemy-recording-folder/kafka-for-developers-using-springboot/kafka-cluster-ssl/secrets/kafka.producer.truststore.jks
         trust-store-password: confluent
-        key-store-location: file:/System/Volumes/Data/Dilip/udemy/kafka-for-developers-using-spring-boot/ssl/kafka.producer.keystore.jks
+        key-store-location: file:/System/Volumes/Data/Dilip/udemy/udemy-recording-folder/kafka-for-developers-using-springboot/kafka-cluster-ssl/secrets/kafka.producer.keystore.jks
         key-store-password: confluent
+    consumer:
+      bootstrap-servers: localhost:9092,localhost:9093,localhost:9094
+      key-deserializer: org.apache.kafka.common.serialization.IntegerDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      group-id: library-events-listener-group
+      auto-offset-reset: latest
+      ssl:
+        trust-store-location: file:/System/Volumes/Data/Dilip/udemy/udemy-recording-folder/kafka-for-developers-using-springboot/kafka-cluster-ssl/secrets/kafka.consumer.truststore.jks
+        trust-store-password: confluent
+#        key-store-location: file:/System/Volumes/Data/Dilip/udemy/udemy-recording-folder/kafka-for-developers-using-springboot/kafka-cluster-ssl/secrets/kafka.consumer.keystore.jks
+#        key-store-password: confluent
       properties:
         acks: all
         retries: 10

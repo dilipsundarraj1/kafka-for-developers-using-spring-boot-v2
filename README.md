@@ -6,15 +6,9 @@ This repository has the complete code related to kafka producers/consumers using
 ## Kafka SetUp
 - [Setup-Kafka-Using-Docker](SetUpKafkaDocker.md)
 
-
-
-- [Setup-Kafka](https://github.com/dilipsundarraj1/kafka-for-developers-using-spring-boot/blob/master/SetUpKafka.md)
-
-- [Setup-Kafka (Version 3)](SetUpKafka3.md)
-
 ## Securing your Kafka Cluster using SSL
 
-- [Kafka SSL SetUp](https://github.com/dilipsundarraj1/kafka-for-developers-using-spring-boot/blob/master/Kafka_Security.md)
+- [Kafka SSL SetUp]((https://github.com/dilipsundarraj1/kafka-for-developers-using-spring-boot/blob/master/SetUpKafka.md)
 
 ## H2 Database
 
