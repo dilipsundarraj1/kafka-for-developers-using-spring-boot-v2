@@ -8,7 +8,7 @@ This repository has the complete code related to kafka producers/consumers using
 
 ## Securing your Kafka Cluster using SSL
 
-- [Kafka SSL SetUp]((https://github.com/dilipsundarraj1/kafka-for-developers-using-spring-boot/blob/master/SetUpKafka.md)
+- [Kafka SSL SetUp](https://github.com/dilipsundarraj1/kafka-cluster-ssl)
 
 ## H2 Database
 

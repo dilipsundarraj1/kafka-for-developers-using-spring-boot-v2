@@ -12,9 +12,9 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       ssl:
-        trust-store-location: file:/System/Volumes/Data/Dilip/udemy/udemy-recording-folder/kafka-for-developers-using-springboot/kafka-cluster-ssl/secrets/kafka.producer.truststore.jks
+        trust-store-location: file:/Users/dilipbandlasundarraj/Dilip/code-with-dilip/kafka-cluster-ssl/secrets/kafka.producer.truststore.jks
         trust-store-password: confluent
-        key-store-location: file:/System/Volumes/Data/Dilip/udemy/udemy-recording-folder/kafka-for-developers-using-springboot/kafka-cluster-ssl/secrets/kafka.producer.keystore.jks
+        key-store-location: file:/Users/dilipbandlasundarraj/Dilip/code-with-dilip/kafka-cluster-ssl/secrets/kafka.producer.keystore.jks
         key-store-password: confluent
       properties:
         acks: all
