@@ -105,8 +105,8 @@ public class LibraryEventsConsumerConfig {
          */
 
         var defaultErrorHandler = new DefaultErrorHandler(
-                consumerRecordRecoverer
-                //publishingRecoverer()
+                //consumerRecordRecoverer
+                publishingRecoverer()
                 ,
                 fixedBackOff
                 //expBackOff
