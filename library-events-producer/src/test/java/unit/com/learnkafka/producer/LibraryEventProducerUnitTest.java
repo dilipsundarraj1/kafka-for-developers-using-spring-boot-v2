@@ -20,7 +20,9 @@ import org.springframework.kafka.support.SendResult;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -57,22 +59,20 @@ public class LibraryEventProducerUnitTest {
                 1, 1, System.currentTimeMillis(), 1, 2);
         SendResult<Integer, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
 
-        var completableFuture = CompletableFuture.supplyAsync(() -> sendResult)
-                .thenApply((sendResult1) -> {
-                    throw new RuntimeException("Exception Calling Kafka");
-                })
-    ;
+        var completableFuture = CompletableFuture.supplyAsync(() -> sendResult);
+        completableFuture.completeExceptionally(new RuntimeException("Exception Calling Kafka"));
+
         when(kafkaTemplate.send(isA(ProducerRecord.class)))
-                .thenReturn(CompletableFuture.supplyAsync(() ->
-                        completableFuture));
+                .thenReturn(completableFuture);
+
 
         //when
-
         var completableFuture1 = eventProducer.sendLibraryEvent_Approach2(TestUtil.libraryEventRecord());
 
         //eventProducer.sendLibraryEvent_Approach2(TestUtil.libraryEventRecord()).get();
         var exception = assertThrows(Exception.class, completableFuture1::get);
-        assertEquals("Exception Calling Kafka", exception.getMessage());
+
+        assertEquals("java.lang.RuntimeException: Exception Calling Kafka", exception.getMessage());
 
     }
 
