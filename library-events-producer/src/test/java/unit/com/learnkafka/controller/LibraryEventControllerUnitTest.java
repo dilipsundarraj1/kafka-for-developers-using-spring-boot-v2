@@ -1,16 +1,17 @@
 package com.learnkafka.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.producer.LibraryEventProducer;
 import com.learnkafka.util.TestUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.when;
@@ -26,9 +27,9 @@ public class LibraryEventControllerUnitTest {
     @Autowired
     MockMvc mockMvc;
 
-    ObjectMapper objectMapper = new ObjectMapper();
+    ObjectMapper objectMapper = JsonMapper.builder().build();
 
-    @MockBean
+    @MockitoBean
     LibraryEventProducer libraryEventProducer;
 
     @Test

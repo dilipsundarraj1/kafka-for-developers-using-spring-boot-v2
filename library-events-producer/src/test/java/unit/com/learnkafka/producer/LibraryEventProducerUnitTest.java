@@ -1,7 +1,7 @@
 package com.learnkafka.producer;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.util.TestUtil;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -34,7 +34,7 @@ public class LibraryEventProducerUnitTest {
     KafkaTemplate<Integer, String> kafkaTemplate;
 
     @Spy
-    ObjectMapper objectMapper = new ObjectMapper();
+    ObjectMapper objectMapper = JsonMapper.builder().build();
 
     @InjectMocks
     LibraryEventProducer eventProducer;
@@ -46,7 +46,7 @@ public class LibraryEventProducerUnitTest {
 
     @Test
     @Disabled
-    void sendLibraryEvent_Approach2_failure() throws JsonProcessingException, ExecutionException, InterruptedException {
+    void sendLibraryEvent_Approach2_failure() throws ExecutionException, InterruptedException {
         //given
 
         LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
@@ -77,7 +77,7 @@ public class LibraryEventProducerUnitTest {
     }
 
     @Test
-    void sendLibraryEvent_Approach2_success() throws JsonProcessingException, ExecutionException, InterruptedException {
+    void sendLibraryEvent_Approach2_success() throws ExecutionException, InterruptedException {
         //given
         LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
         String record = objectMapper.writeValueAsString(libraryEvent);

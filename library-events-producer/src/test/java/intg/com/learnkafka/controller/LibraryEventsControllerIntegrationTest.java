@@ -1,7 +1,6 @@
 package com.learnkafka.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.util.TestUtil;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -14,7 +13,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.http.*;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
@@ -28,6 +28,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureTestRestTemplate
 @EmbeddedKafka(topics = {"library-events"}, partitions = 3)
 @TestPropertySource(properties = {"spring.kafka.producer.bootstrap-servers=${spring.embedded.kafka.brokers}",
         "spring.kafka.admin.properties.bootstrap.servers=${spring.embedded.kafka.brokers}"})
@@ -58,7 +59,7 @@ public class LibraryEventsControllerIntegrationTest {
     }
 
     @Test
-    void postLibraryEvent() throws JsonProcessingException {
+    void postLibraryEvent() {
         //given
         LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
         System.out.println("libraryEvent : " + objectMapper.writeValueAsString(libraryEvent));
@@ -88,7 +89,7 @@ public class LibraryEventsControllerIntegrationTest {
     }
 
     @Test
-    void putLibraryEvent() throws JsonProcessingException {
+    void putLibraryEvent() {
         //given
         var libraryEventUpdate = TestUtil.libraryEventRecordUpdate();
         System.out.println("libraryEvent : " + objectMapper.writeValueAsString(libraryEventUpdate));
