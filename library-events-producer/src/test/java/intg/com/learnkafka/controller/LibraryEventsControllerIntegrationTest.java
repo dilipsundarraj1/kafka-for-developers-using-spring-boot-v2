@@ -2,6 +2,7 @@ package com.learnkafka.controller;
 
 import tools.jackson.databind.ObjectMapper;
 import com.learnkafka.domain.LibraryEvent;
+import com.learnkafka.domain.LibraryEventType;
 import com.learnkafka.util.TestUtil;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -17,28 +18,32 @@ import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.http.*;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.test.EmbeddedKafkaBroker;
-import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.ActiveProfiles;
 
-import java.util.HashMap;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Integration test using Spring Boot Docker Compose support.
+ * Kafka is started automatically from compose.yaml when tests run.
+ * Uses 'test' profile to load application-test.yml configuration.
+ */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
-@EmbeddedKafka(topics = {"library-events"}, partitions = 3)
-@TestPropertySource(properties = {"spring.kafka.producer.bootstrap-servers=${spring.embedded.kafka.brokers}",
-        "spring.kafka.admin.properties.bootstrap.servers=${spring.embedded.kafka.brokers}"})
+@ActiveProfiles("test")
 public class LibraryEventsControllerIntegrationTest {
+
+    private static final String BOOTSTRAP_SERVERS = "localhost:9092";
+    private static final String TOPIC = "library-events";
 
     @Autowired
     TestRestTemplate restTemplate;
-
-    @Autowired
-    EmbeddedKafkaBroker embeddedKafkaBroker;
 
     @Autowired
     ObjectMapper objectMapper;
@@ -47,10 +52,18 @@ public class LibraryEventsControllerIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        Map<String, Object> configs = new HashMap<>(KafkaTestUtils.consumerProps("group1", "true", embeddedKafkaBroker));
-        configs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
-        consumer = new DefaultKafkaConsumerFactory<>(configs, new IntegerDeserializer(), new StringDeserializer()).createConsumer();
-        embeddedKafkaBroker.consumeFromAllEmbeddedTopics(consumer);
+        // Create consumer pointing to Docker Compose Kafka with unique group ID
+        Map<String, Object> configs = Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS,
+                ConsumerConfig.GROUP_ID_CONFIG, "test-group-" + System.currentTimeMillis(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest",
+                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, IntegerDeserializer.class,
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class
+        );
+        consumer = new DefaultKafkaConsumerFactory<Integer, String>(configs).createConsumer();
+        consumer.subscribe(List.of(TOPIC));
+        // Poll once to assign partitions and set position to end
+        consumer.poll(Duration.ofMillis(500));
     }
 
     @AfterEach
@@ -73,19 +86,19 @@ public class LibraryEventsControllerIntegrationTest {
         //then
         assertEquals(HttpStatus.CREATED, responseEntity.getStatusCode());
 
-        //Instantiate a consumer
-        // Read the record , assert the count and parse the record and assert on it.
+        // Read the record from Kafka and verify
+        ConsumerRecords<Integer, String> consumerRecords = KafkaTestUtils.getRecords(consumer, Duration.ofSeconds(10));
+        assertTrue(consumerRecords.count() >= 1, "Expected at least 1 record");
 
-        ConsumerRecords<Integer, String> consumerRecords = KafkaTestUtils.getRecords(consumer);
-        //Thread.sleep(3000);
-        assert consumerRecords.count() == 1;
+        AtomicBoolean found = new AtomicBoolean(false);
         consumerRecords.forEach(record -> {
             var libraryEventActual = TestUtil.parseLibraryEventRecord(objectMapper, record.value());
-            assertEquals(libraryEvent, libraryEventActual);
-
+            if (libraryEventActual.libraryEventType() == LibraryEventType.NEW) {
+                assertEquals(libraryEvent, libraryEventActual);
+                found.set(true);
+            }
         });
-
-
+        assertTrue(found.get(), "Expected to find a NEW library event");
     }
 
     @Test
@@ -97,24 +110,24 @@ public class LibraryEventsControllerIntegrationTest {
         headers.set("content-type", MediaType.APPLICATION_JSON.toString());
         HttpEntity<LibraryEvent> request = new HttpEntity<>(libraryEventUpdate, headers);
 
-
         //when
         ResponseEntity<LibraryEvent> responseEntity = restTemplate.exchange("/v1/libraryevent", HttpMethod.PUT, request, LibraryEvent.class);
 
         //then
         assertEquals(HttpStatus.OK, responseEntity.getStatusCode());
 
+        // Read the record from Kafka and verify
+        ConsumerRecords<Integer, String> consumerRecords = KafkaTestUtils.getRecords(consumer, Duration.ofSeconds(10));
+        assertTrue(consumerRecords.count() >= 1, "Expected at least 1 record");
 
-        ConsumerRecords<Integer, String> consumerRecords = KafkaTestUtils.getRecords(consumer);
-        //Thread.sleep(3000);
-        assert consumerRecords.count() == 2;
+        AtomicBoolean found = new AtomicBoolean(false);
         consumerRecords.forEach(record -> {
-            if (record.key() != null) {
-                var libraryEventActual = TestUtil.parseLibraryEventRecord(objectMapper, record.value());
+            var libraryEventActual = TestUtil.parseLibraryEventRecord(objectMapper, record.value());
+            if (libraryEventActual.libraryEventType() == LibraryEventType.UPDATE && record.key() != null) {
                 assertEquals(libraryEventUpdate, libraryEventActual);
+                found.set(true);
             }
         });
-
-
+        assertTrue(found.get(), "Expected to find an UPDATE library event");
     }
 }

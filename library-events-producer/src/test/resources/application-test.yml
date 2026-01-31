@@ -1,0 +1,21 @@
+spring:
+  docker:
+    compose:
+      lifecycle-management: start-and-stop
+      skip:
+        in-tests: false
+  kafka:
+    topic: library-events
+    template:
+      default-topic: library-events
+    producer:
+      bootstrap-servers: localhost:9092
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        acks: all
+        retries: 10
+        retry.backoff.ms: 1000
+    admin:
+      properties:
+        bootstrap.servers: localhost:9092
