@@ -6,7 +6,7 @@ plugins {
 
 group = 'com.learnkafka'
 version = '0.0.1-SNAPSHOT'
-sourceCompatibility = '17'
+sourceCompatibility = '25'
 
 configurations {
 	compileOnly {
