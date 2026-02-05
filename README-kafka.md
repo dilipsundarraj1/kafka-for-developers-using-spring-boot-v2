@@ -85,31 +85,18 @@ docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
   --delete --topic my-topic
 ```
 
-## Producing Messages
+## Producing and Consuming Messages
 
-### Interactive Producer (type messages manually)
+### Producer
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
-  --describe --topic my-topic
+docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
+  --topic my-topic
 ```
 
 Type your messages and press Enter after each. Press `Ctrl+C` to exit.
 
-### Producer with Keys
-
-```bash
-docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
-  --topic my-topic \
-  --property parse.key=true \
-  --property key.separator=:
-```
-
-Format: `key:value` (e.g., `user1:Hello World`)
-
-## Consuming Messages
-
-### Consume New Messages
+### Consumer
 
 ```bash
 docker exec -it kafka1 kafka-console-consumer --bootstrap-server localhost:9092 \
@@ -123,7 +110,20 @@ docker exec -it kafka1 kafka-console-consumer --bootstrap-server localhost:9092 
   --topic my-topic --from-beginning
 ```
 
-### Consume with Keys
+---
+
+### Producer with Keys
+
+```bash
+docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
+  --topic my-topic \
+  --property parse.key=true \
+  --property key.separator=:
+```
+
+Format: `key:value` (e.g., `user1:Hello World`)
+
+### Consumer with Keys
 
 ```bash
 docker exec -it kafka1 kafka-console-consumer --bootstrap-server localhost:9092 \
@@ -131,6 +131,8 @@ docker exec -it kafka1 kafka-console-consumer --bootstrap-server localhost:9092 
   --property print.key=true \
   --property key.separator=:
 ```
+
+---
 
 ### Consume with Consumer Group
 
