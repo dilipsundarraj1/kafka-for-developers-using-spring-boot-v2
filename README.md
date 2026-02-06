@@ -4,7 +4,7 @@
 This repository has the complete code related to kafka producers/consumers using spring boot.
 
 ## Kafka SetUp
-- [Setup-Kafka-Using-Docker](SetUpKafkaDocker.md)
+- [Setup-Kafka-Using-Docker](README-kafka.md)
 
 ## Securing your Kafka Cluster using SSL
 
