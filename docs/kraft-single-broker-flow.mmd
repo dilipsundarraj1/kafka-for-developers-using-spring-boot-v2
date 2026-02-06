@@ -1,0 +1,29 @@
+flowchart TB
+    subgraph step1["Step 1: Controller Initializes"]
+        A[Node Starts<br/>process.roles=broker,controller] --> B[Controller Component<br/>Initializes]
+        B --> C[(\_\_cluster_metadata<br/>KRaft Log)]
+        B --> D[Self-Elects as<br/>Active Controller]
+    end
+
+    subgraph step2["Step 2: Broker Registers"]
+        E[Broker Component] -->|Registration| F[Controller Component]
+        F -->|Records| G[(\_\_cluster_metadata<br/>broker registered)]
+        G -->|Confirmation| H[Broker Ready for<br/>Client Connections]
+    end
+
+    subgraph step3["Step 3: Topic Creation"]
+        I[Client<br/>kafka-topics --create] -->|Create Topic| J[Controller]
+        J -->|Decides:<br/>3 partitions<br/>node.id=1 leads all| K[(\_\_cluster_metadata<br/>topic config saved)]
+        K -->|Broker reads update| L[Broker Creates:<br/>my-topic-0/<br/>my-topic-1/<br/>my-topic-2/]
+    end
+
+    subgraph step4["Step 4: Producer Sends Messages"]
+        M[Producer] -->|1. Where is partition-0?| N[Broker]
+        N <-->|2. Metadata lookup| O[Controller]
+        O -->|node.id=1 is leader| N
+        N -->|3. Write Message| P[(Disk<br/>my-topic-0)]
+    end
+
+    step1 --> step2
+    step2 --> step3
+    step3 --> step4

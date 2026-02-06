@@ -181,6 +181,16 @@ spring:
 
 ## Troubleshooting
 
+### Validate KRaft Configuration
+
+Verify the `process.roles` property and other KRaft settings inside the container:
+
+```bash
+docker exec kafka1 cat /etc/kafka/kafka.properties
+```
+
+This should show `process.roles=broker,controller` confirming the node is running in KRaft combined mode.
+
 ### Check Kafka Logs
 
 ```bash
@@ -197,6 +207,15 @@ docker exec kafka1 kafka-broker-api-versions --bootstrap-server localhost:9092
 
 ```bash
 docker exec kafka1 kafka-metadata --snapshot /var/lib/kafka/data/__cluster_metadata-0/00000000000000000000.log --command "cat"
+```
+
+### Read __cluster_metadata Topic
+
+The `__cluster_metadata` topic stores KRaft cluster state. Use `kafka-dump-log` to read its contents:
+
+```bash
+docker exec kafka1 kafka-dump-log --cluster-metadata-decoder \
+  --files /var/lib/kafka/data/__cluster_metadata-0/00000000000000000000.log
 ```
 
 ### Container Shell Access
