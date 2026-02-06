@@ -29,6 +29,37 @@ docker-compose ps
 docker logs -f kafka1
 ```
 
+### Connection Summary
+
+```
+┌──────────────────────┐
+│   Your Host Machine  │
+│   (Spring Boot App)  │
+│                      │
+│   localhost:9092 ────┼──────┐
+└──────────────────────┘      │
+                              │ EXTERNAL
+                              ▼
+                    ┌─────────────────┐
+                    │     kafka1      │
+                    │   (container)   │
+                    └─────────────────┘
+                              ▲
+                              │ DOCKER
+┌──────────────────────┐      │
+│  Other Container     │      │
+│  (e.g., microservice)│      │
+│                      │      │
+│ host.docker.internal:├──────┘
+│        29092         │
+└──────────────────────┘
+```
+
+| Connection From | Bootstrap Server |
+|-----------------|------------------|
+| Host machine | `localhost:9092` |
+| Other Docker containers | `host.docker.internal:29092` |
+
 ## Stopping Kafka
 
 ### Single Broker
