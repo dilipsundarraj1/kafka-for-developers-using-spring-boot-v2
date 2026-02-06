@@ -24,6 +24,19 @@ flowchart TB
         N -->|3. Write Message| P[(Disk<br/>my-topic-0)]
     end
 
+    subgraph step5["Step 5: Consumer Reads Messages"]
+        Q[Consumer] -->|1. Join group request| R[Broker<br/>Group Coordinator]
+        R -->|2. Assigns partitions| S[(\_\_consumer_offsets<br/>group membership)]
+        Q -->|3. Where is partition-0?| R
+        R <-->|4. Metadata lookup| T[Controller]
+        T -->|node.id=1 is leader| R
+        U[(Disk<br/>my-topic-0)] -->|5. Fetch messages<br/>from offset| R
+        R -->|6. Return messages| Q
+        Q -->|7. Commit offset| R
+        R -->|8. Store offset| S
+    end
+
     step1 --> step2
     step2 --> step3
     step3 --> step4
+    step4 --> step5
