@@ -149,10 +149,10 @@ docker exec -it kafka1 kafka-console-consumer --bootstrap-server localhost:9092 
 docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
   --topic my-topic \
   --property parse.key=true \
-  --property key.separator=:
+  --property key.separator=-
 ```
 
-Format: `key:value` (e.g., `user1:Hello World`)
+Format: `key-value` (e.g., `user1-Hello World`)
 
 ### Consumer with Keys
 
@@ -160,7 +160,7 @@ Format: `key:value` (e.g., `user1:Hello World`)
 docker exec -it kafka1 kafka-console-consumer --bootstrap-server localhost:9092 \
   --topic my-topic --from-beginning \
   --property print.key=true \
-  --property key.separator=:
+  --property key.separator=-
 ```
 
 ---
