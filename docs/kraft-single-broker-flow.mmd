@@ -18,22 +18,27 @@ flowchart TB
     end
 
     subgraph step4["Step 4: Producer Sends Messages"]
-        M[Producer] -->|1. Where is partition-0?| N[Broker]
-        N <-->|2. Metadata lookup| O[Controller]
-        O -->|node.id=1 is leader| N
-        N -->|3. Write Message| P[(Disk<br/>my-topic-0)]
+        M[Producer] -->|1. Metadata Request<br/>for my-topic| N[Broker]
+        N <-->|2. Fetch topic info| O[Controller]
+        N -->|3. Metadata Response:<br/>3 partitions<br/>node.id=1 leads all| M
+        M -->|4. Partitioner decides:<br/>hash-key % 3 or sticky| M2[Producer<br/>Partitioner]
+        M2 -->|5. ProduceRequest<br/>to partition-X| N
+        N -->|6. Write Message| P[(Disk<br/>my-topic-X)]
     end
 
     subgraph step5["Step 5: Consumer Reads Messages"]
-        Q[Consumer] -->|1. Join group request| R[Broker<br/>Group Coordinator]
-        R -->|2. Assigns partitions| S[(\_\_consumer_offsets<br/>group membership)]
-        Q -->|3. Where is partition-0?| R
-        R <-->|4. Metadata lookup| T[Controller]
-        T -->|node.id=1 is leader| R
-        U[(Disk<br/>my-topic-0)] -->|5. Fetch messages<br/>from offset| R
-        R -->|6. Return messages| Q
-        Q -->|7. Commit offset| R
-        R -->|8. Store offset| S
+        Q[Consumer] -->|1. FindCoordinator| R[Broker<br/>Group Coordinator]
+        Q -->|2. JoinGroup request| R
+        R -->|3. Partition assignment<br/>partition-0,1,2 → consumer| Q
+        R -->|Records membership| S[(\_\_consumer_offsets)]
+        Q -->|4. Metadata Request| R
+        R <-->|Fetch topic info| T[Controller]
+        R -->|5. Metadata Response:<br/>node.id=1 leads all| Q
+        Q -->|6. FetchRequest<br/>from offset| R
+        U[(Disk<br/>my-topic-X)] -->|Read messages| R
+        R -->|7. Return messages| Q
+        Q -->|8. OffsetCommit| R
+        R -->|Store offset| S
     end
 
     step1 --> step2
