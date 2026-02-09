@@ -1175,7 +1175,7 @@ controller.listener.names=CONTROLLER
 - Existing production clusters not ready for migration
 - Dependent tooling requires Zookeeper
 
-> **Voice Script:**
+> **Voice Script:** A
 >
 > "So when should you use each mode? The answer is pretty straightforward now.
 >
