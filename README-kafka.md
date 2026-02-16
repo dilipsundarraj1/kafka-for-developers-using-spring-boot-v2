@@ -202,7 +202,16 @@ The following demonstrations require the 3-broker cluster. Start it with:
 docker-compose -f docker-compose-multi-broker.yml up -d
 ```
 
+---
+
 ### Demo 1: Replication in Action
+
+> **What is Replication?**
+> - Replication means storing copies of the same data on multiple brokers
+> - The `replication.factor` setting determines how many copies exist
+> - One broker is the **Leader** (handles reads/writes), others are **Followers** (replicate data)
+> - If a broker fails, data is still available on other brokers
+> - Industry standard: `replication.factor=3` for production workloads
 
 **Concept:** Data is automatically replicated across all 3 brokers.
 
@@ -335,6 +344,14 @@ baseOffset: 2 ... payload: message3
 
 ### Demo 2: Leader Election (Failover)
 
+> **What is Leader Election?**
+> - Each partition has ONE leader that handles all reads and writes
+> - Followers only replicate data from the leader
+> - When a leader broker fails, Kafka automatically elects a new leader from the followers
+> - Election happens in milliseconds (< 1 second with KRaft)
+> - Producers and consumers automatically reconnect to the new leader
+> - This is how Kafka achieves **high availability** - no manual intervention needed
+
 **Concept:** When a leader fails, a follower automatically becomes the new leader.
 
 ```
@@ -400,6 +417,17 @@ ISR should expand back to include all 3 brokers.
 ---
 
 ### Demo 3: ISR and min.insync.replicas
+
+> **What is ISR (In-Sync Replicas)?**
+> - ISR is the set of replicas that are fully caught up with the leader
+> - A replica falls out of ISR if it lags too far behind (network issues, slow disk)
+> - Only ISR members can be elected as new leader (they have all the data)
+>
+> **What is min.insync.replicas?**
+> - Minimum number of replicas that must acknowledge a write (when `acks=all`)
+> - If ISR count falls below this value, producers receive `NotEnoughReplicasException`
+> - This protects against data loss - better to reject writes than lose them
+> - Common setting: `replication.factor=3` with `min.insync.replicas=2`
 
 **Concept:** Writes require acknowledgment from a minimum number of replicas.
 
@@ -476,6 +504,17 @@ docker start kafka2 kafka3
 ---
 
 ### Demo 4: Partition Distribution
+
+> **What is Partition Distribution?**
+> - Kafka spreads partitions across all available brokers
+> - Each partition's leader is assigned to a different broker (round-robin)
+> - This ensures **load balancing** - no single broker handles all the traffic
+> - More partitions = more parallelism for producers and consumers
+> - When a broker fails, only its partitions need to failover (not all partitions)
+>
+> **Rule of thumb:**
+> - Number of partitions determines max consumer parallelism
+> - A consumer group can have at most as many consumers as partitions
 
 **Concept:** Partitions are spread across brokers for parallelism and fault tolerance.
 
