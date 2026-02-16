@@ -194,6 +194,258 @@ docker exec kafka1 kafka-consumer-groups --bootstrap-server localhost:9092 \
   --group my-consumer-group --topic my-topic --reset-offsets --to-earliest --execute
 ```
 
+## Multi-Broker Demonstrations
+
+The following demonstrations require the 3-broker cluster. Start it with:
+
+```bash
+docker-compose -f docker-compose-multi-broker.yml up -d
+```
+
+### Demo 1: Replication in Action
+
+**Concept:** Data is automatically replicated across all 3 brokers.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    REPLICATION                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Producer ───▶ Broker 1 (Leader)                                           │
+│                     │                                                       │
+│                     ├───▶ Broker 2 (Follower) - replicates                  │
+│                     └───▶ Broker 3 (Follower) - replicates                  │
+│                                                                             │
+│   Result: All 3 brokers have the same data                                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Create a topic with replication factor 3:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --create --topic demo-topic --partitions 3 --replication-factor 3
+```
+
+**Describe the topic to see replication:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic demo-topic
+```
+
+**Expected Output:**
+
+```
+Topic: demo-topic    PartitionCount: 3    ReplicationFactor: 3
+    Partition: 0    Leader: 1    Replicas: 1,2,3    Isr: 1,2,3
+    Partition: 1    Leader: 2    Replicas: 2,3,1    Isr: 2,3,1
+    Partition: 2    Leader: 3    Replicas: 3,1,2    Isr: 3,1,2
+```
+
+**What to observe:**
+- Each partition has a different leader (distributed leadership)
+- `Replicas` lists all 3 brokers for each partition
+- `Isr` (In-Sync Replicas) shows all 3 are synchronized
+
+---
+
+### Demo 2: Leader Election (Failover)
+
+**Concept:** When a leader fails, a follower automatically becomes the new leader.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    LEADER ELECTION                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   BEFORE:                          AFTER (kafka1 stopped):                  │
+│   ┌─────────┐                      ┌─────────┐                              │
+│   │ kafka1  │                      │ kafka1  │                              │
+│   │ P0: L   │  ── stop ──▶        │  (down) │                              │
+│   └─────────┘                      └─────────┘                              │
+│   ┌─────────┐                      ┌─────────┐                              │
+│   │ kafka2  │                      │ kafka2  │                              │
+│   │ P0: F   │  ── promoted ──▶    │ P0: L   │ ◀── NEW LEADER               │
+│   └─────────┘                      └─────────┘                              │
+│                                                                             │
+│   ISR changes from [1,2,3] to [2,3]                                         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Step 1: Check current leader for partition 0:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic demo-topic | grep "Partition: 0"
+```
+
+**Step 2: Stop broker 1:**
+
+```bash
+docker stop kafka1
+```
+
+**Step 3: Check the new leader (connect to kafka2):**
+
+```bash
+docker exec kafka2 kafka-topics --bootstrap-server localhost:9094 \
+  --describe --topic demo-topic
+```
+
+**What to observe:**
+- Leader changed from broker 1 to another broker
+- ISR shrinks from `[1,2,3]` to `[2,3]`
+- **No data loss** - all messages still available
+
+**Step 4: Restart broker 1:**
+
+```bash
+docker start kafka1
+```
+
+**Step 5: Verify ISR is restored:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic demo-topic
+```
+
+ISR should expand back to include all 3 brokers.
+
+---
+
+### Demo 3: ISR and min.insync.replicas
+
+**Concept:** Writes require acknowledgment from a minimum number of replicas.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ISR AND MIN.INSYNC.REPLICAS                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Configuration: replication.factor=3, min.insync.replicas=2, acks=all      │
+│                                                                             │
+│   SCENARIO 1: All brokers healthy (ISR=3)                                   │
+│   ISR size = 3 >= min.insync.replicas = 2  ✓ WRITES ALLOWED                 │
+│                                                                             │
+│   SCENARIO 2: One broker down (ISR=2)                                       │
+│   ISR size = 2 >= min.insync.replicas = 2  ✓ WRITES STILL ALLOWED           │
+│                                                                             │
+│   SCENARIO 3: Two brokers down (ISR=1)                                      │
+│   ISR size = 1 < min.insync.replicas = 2   ✗ WRITES REJECTED!               │
+│   Producer receives: NotEnoughReplicasException                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Step 1: Create a topic with min.insync.replicas=2:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --create --topic isr-demo --partitions 1 --replication-factor 3 \
+  --config min.insync.replicas=2
+```
+
+**Step 2: Start a producer with acks=all:**
+
+```bash
+docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
+  --topic isr-demo --producer-property acks=all
+```
+
+**Step 3: In another terminal, check ISR:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic isr-demo
+```
+
+**Step 4: Stop broker 2 and check ISR:**
+
+```bash
+docker stop kafka2
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic isr-demo
+```
+
+ISR should show only 2 brokers. Producer **still works** (ISR=2 >= min.insync.replicas=2).
+
+**Step 5: Stop broker 3:**
+
+```bash
+docker stop kafka3
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic isr-demo
+```
+
+ISR now shows only 1 broker. Try to produce - it should **FAIL** with `NotEnoughReplicasException`.
+
+**Step 6: Restart brokers:**
+
+```bash
+docker start kafka2 kafka3
+```
+
+**Key takeaway:** `min.insync.replicas` protects your data by refusing writes when durability can't be guaranteed.
+
+---
+
+### Demo 4: Partition Distribution
+
+**Concept:** Partitions are spread across brokers for parallelism and fault tolerance.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PARTITION DISTRIBUTION                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   TOPIC: orders (6 partitions, RF=3)                                        │
+│                                                                             │
+│   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
+│   │    BROKER 1     │  │    BROKER 2     │  │    BROKER 3     │            │
+│   ├─────────────────┤  ├─────────────────┤  ├─────────────────┤            │
+│   │ P0: LEADER      │  │ P0: follower    │  │ P0: follower    │            │
+│   │ P1: follower    │  │ P1: LEADER      │  │ P1: follower    │            │
+│   │ P2: follower    │  │ P2: follower    │  │ P2: LEADER      │            │
+│   │ P3: LEADER      │  │ P3: follower    │  │ P3: follower    │            │
+│   │ P4: follower    │  │ P4: LEADER      │  │ P4: follower    │            │
+│   │ P5: follower    │  │ P5: follower    │  │ P5: LEADER      │            │
+│   └─────────────────┘  └─────────────────┘  └─────────────────┘            │
+│                                                                             │
+│   Each broker leads 2 partitions - BALANCED!                                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Step 1: Create a topic with 6 partitions:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --create --topic orders --partitions 6 --replication-factor 3
+```
+
+**Step 2: Describe to see distribution:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic orders
+```
+
+**Step 3: Count leaders per broker:**
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic orders | grep "Leader:" | awk '{print $4}' | sort | uniq -c
+```
+
+**What to observe:**
+- Leadership is distributed evenly across brokers
+- Each broker handles roughly equal load
+- If a broker fails, only its partitions need to failover
+
 ## Commit Log & Retention
 
 ### Understanding the Commit Log
