@@ -249,6 +249,88 @@ Topic: demo-topic    PartitionCount: 3    ReplicationFactor: 3
 - `Replicas` lists all 3 brokers for each partition
 - `Isr` (In-Sync Replicas) shows all 3 are synchronized
 
+#### Viewing Replicated Data Across Brokers
+
+Now let's produce some messages and verify the same data exists on all 3 brokers.
+
+**Step 1: Produce messages to the topic:**
+
+```bash
+docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
+  --topic demo-topic
+```
+
+Type a few messages (e.g., `message1`, `message2`, `message3`) and press `Ctrl+C` to exit.
+
+**Step 2: Verify partition directories exist on ALL brokers:**
+
+```bash
+# Check kafka1
+docker exec kafka1 ls -la /var/lib/kafka/data/ | grep demo-topic
+
+# Check kafka2
+docker exec kafka2 ls -la /var/lib/kafka/data/ | grep demo-topic
+
+# Check kafka3
+docker exec kafka3 ls -la /var/lib/kafka/data/ | grep demo-topic
+```
+
+All 3 brokers should show `demo-topic-0`, `demo-topic-1`, and `demo-topic-2` directories.
+
+**Step 3: View the actual data on each broker using kafka-dump-log:**
+
+```bash
+# View data on Broker 1 (partition 0)
+docker exec kafka1 kafka-dump-log \
+  --files /var/lib/kafka/data/demo-topic-0/00000000000000000000.log \
+  --print-data-log
+
+# View data on Broker 2 (partition 0) - SAME DATA!
+docker exec kafka2 kafka-dump-log \
+  --files /var/lib/kafka/data/demo-topic-0/00000000000000000000.log \
+  --print-data-log
+
+# View data on Broker 3 (partition 0) - SAME DATA!
+docker exec kafka3 kafka-dump-log \
+  --files /var/lib/kafka/data/demo-topic-0/00000000000000000000.log \
+  --print-data-log
+```
+
+**What you'll see:**
+
+```
+Dumping /var/lib/kafka/data/demo-topic-0/00000000000000000000.log
+Starting offset: 0
+baseOffset: 0 ... payload: message1
+baseOffset: 1 ... payload: message2
+baseOffset: 2 ... payload: message3
+```
+
+**Key observation:** The exact same messages with the same offsets appear on all 3 brokers. This is replication in action - Kafka automatically copies every message to all replicas.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    DATA REPLICATION PROOF                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Broker 1 (kafka1)          Broker 2 (kafka2)          Broker 3 (kafka3)   │
+│   /var/lib/kafka/data/       /var/lib/kafka/data/       /var/lib/kafka/data/│
+│   └── demo-topic-0/          └── demo-topic-0/          └── demo-topic-0/   │
+│       └── ...00000.log           └── ...00000.log           └── ...00000.log│
+│           offset 0: msg1             offset 0: msg1             offset 0: msg1│
+│           offset 1: msg2             offset 1: msg2             offset 1: msg2│
+│           offset 2: msg3             offset 2: msg3             offset 2: msg3│
+│                                                                             │
+│   IDENTICAL DATA ON ALL 3 BROKERS!                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this matters:**
+- If any broker fails, the data is safe on the other 2 brokers
+- Consumers can continue reading from surviving brokers
+- No manual intervention needed - replication is automatic and continuous
+
 ---
 
 ### Demo 2: Leader Election (Failover)
