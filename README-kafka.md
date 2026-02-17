@@ -267,11 +267,75 @@ Topic: demo-topic    PartitionCount: 3    ReplicationFactor: 3
 - `Replicas` lists all 3 brokers for each partition
 - `Isr` (In-Sync Replicas) shows all 3 are synchronized
 
-#### Viewing Replicated Data Across Brokers
+#### Live Producer-Consumer Interaction
 
-Now let's produce some messages and verify the same data exists on all 3 brokers.
+This demonstrates real-time message flow between producer and consumer across the replicated cluster.
 
-**Step 1: Produce messages to the topic:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PRODUCER-CONSUMER FLOW                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Terminal 1 (Producer)              Terminal 2 (Consumer)                  │
+│   ┌─────────────────────┐            ┌─────────────────────┐                │
+│   │ > hello             │            │                     │                │
+│   │ > world             │ ────────▶  │ hello               │                │
+│   │ > kafka rocks!      │            │ world               │                │
+│   │                     │            │ kafka rocks!        │                │
+│   └─────────────────────┘            └─────────────────────┘                │
+│         │                                   ▲                               │
+│         │         ┌─────────────────────────┤                               │
+│         ▼         ▼                         │                               │
+│   ┌─────────┬─────────┬─────────┐          │                               │
+│   │ kafka1  │ kafka2  │ kafka3  │──────────┘                               │
+│   │ (write) │(replica)│(replica)│  Consumer can read from ANY broker       │
+│   └─────────┴─────────┴─────────┘                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Terminal 1 - Start a Consumer (run this first):**
+
+```bash
+docker exec -it kafka1 kafka-console-consumer --bootstrap-server kafka1:19092 \
+  --topic demo-topic --from-beginning
+```
+
+**Terminal 2 - Start a Producer:**
+
+```bash
+docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 \
+  --topic demo-topic
+```
+
+Type messages in the producer terminal and watch them appear instantly in the consumer terminal.
+
+**Bonus: Consumer from a Different Broker**
+
+To prove replication works, start another consumer connected to a **different broker**:
+
+```bash
+# Consumer connected to kafka2
+docker exec -it kafka2 kafka-console-consumer --bootstrap-server kafka2:19094 \
+  --topic demo-topic --from-beginning
+
+# Consumer connected to kafka3
+docker exec -it kafka3 kafka-console-consumer --bootstrap-server kafka3:19096 \
+  --topic demo-topic --from-beginning
+```
+
+**What to observe:**
+- All consumers receive the **same messages** regardless of which broker they connect to
+- This proves data is replicated across all brokers
+- Consumers can connect to any broker - Kafka handles routing automatically
+
+---
+
+#### Viewing Replicated Data on Disk
+
+Now let's verify the same data exists on all 3 brokers at the file system level.
+
+**Step 1: Produce messages to the topic (if not already done):**
 
 ```bash
 docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 \
@@ -280,7 +344,7 @@ docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 \
 
 Type a few messages (e.g., `message1`, `message2`, `message3`) and press `Ctrl+C` to exit.
 
-**Step 2: Verify partition directories exist on ALL brokers:**
+**Step 2: Verify partition directories exist on all brokers:**
 
 ```bash
 # Check kafka1
