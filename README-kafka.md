@@ -2,6 +2,52 @@
 
 This guide covers running Kafka locally using Docker with KRaft mode (no Zookeeper required).
 
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Starting Kafka](#starting-kafka)
+  - [Single Broker](#single-broker)
+  - [Multi-Broker (3 nodes)](#multi-broker-3-nodes)
+  - [Verify Kafka is Running](#verify-kafka-is-running)
+  - [Connection Summary](#connection-summary)
+- [Stopping Kafka](#stopping-kafka)
+- [Working with Topics](#working-with-topics)
+  - [List Topics](#list-topics)
+  - [Create a Topic](#create-a-topic)
+  - [Describe a Topic](#describe-a-topic)
+  - [Delete a Topic](#delete-a-topic)
+- [Producing and Consuming Messages](#producing-and-consuming-messages)
+  - [Producer](#producer)
+  - [Consumer](#consumer)
+  - [Consume from Beginning](#consume-from-beginning)
+  - [Producer with Keys](#producer-with-keys)
+  - [Consumer with Keys](#consumer-with-keys)
+  - [Consume with Consumer Group](#consume-with-consumer-group)
+- [Consumer Groups](#consumer-groups)
+  - [List Consumer Groups](#list-consumer-groups)
+  - [Describe Consumer Group](#describe-consumer-group)
+  - [Reset Consumer Group Offset](#reset-consumer-group-offset)
+- [Multi-Broker Demonstrations](#multi-broker-demonstrations)
+  - [Demo 1: Replication in Action](#demo-1-replication-in-action)
+  - [Demo 2: Leader Election (Failover)](#demo-2-leader-election-failover)
+  - [Demo 3: ISR and min.insync.replicas](#demo-3-isr-and-mininsuncreplicas)
+  - [Demo 4: Partition Distribution](#demo-4-partition-distribution)
+- [Commit Log & Retention](#commit-log--retention)
+  - [Understanding the Commit Log](#understanding-the-commit-log)
+  - [Log Storage Location](#log-storage-location)
+  - [Viewing the Commit Log](#viewing-the-commit-log)
+  - [Retention Period](#retention-period)
+  - [Retention Configuration Summary](#retention-configuration-summary)
+  - [Log Compaction](#log-compaction)
+- [Connection Details](#connection-details)
+- [Troubleshooting](#troubleshooting)
+  - [Validate KRaft Configuration](#validate-kraft-configuration)
+  - [Check Kafka Logs](#check-kafka-logs)
+  - [Check Broker Status](#check-broker-status)
+  - [Check Cluster Metadata](#check-cluster-metadata)
+  - [Read __cluster_metadata Topic](#read-__cluster_metadata-topic)
+  - [Container Shell Access](#container-shell-access)
+
 ## Prerequisites
 
 - Docker and Docker Compose installed
