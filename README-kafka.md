@@ -202,6 +202,15 @@ The following demonstrations require the 3-broker cluster. Start it with:
 docker-compose -f docker-compose-multi-broker.yml up -d
 ```
 
+> **Important: Bootstrap Server for Multi-Broker**
+>
+> When running commands inside containers with `docker exec`, use the **internal listener** (`kafka1:19092`) instead of `localhost:9092`. This is because the cluster metadata returns internal addresses for all brokers, which are only resolvable within the Docker network.
+>
+> | Context | Bootstrap Server |
+> |---------|------------------|
+> | Inside container (docker exec) | `kafka1:19092` |
+> | From host machine | `localhost:9092` |
+
 ---
 
 ### Demo 1: Replication in Action
@@ -233,14 +242,14 @@ docker-compose -f docker-compose-multi-broker.yml up -d
 **Create a topic with replication factor 3:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --create --topic demo-topic --partitions 3 --replication-factor 3
 ```
 
 **Describe the topic to see replication:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic demo-topic
 ```
 
@@ -265,7 +274,7 @@ Now let's produce some messages and verify the same data exists on all 3 brokers
 **Step 1: Produce messages to the topic:**
 
 ```bash
-docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
+docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 \
   --topic demo-topic
 ```
 
@@ -377,7 +386,7 @@ baseOffset: 2 ... payload: message3
 **Step 1: Check current leader for partition 0:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic demo-topic | grep "Partition: 0"
 ```
 
@@ -390,7 +399,7 @@ docker stop kafka1
 **Step 3: Check the new leader (connect to kafka2):**
 
 ```bash
-docker exec kafka2 kafka-topics --bootstrap-server localhost:9094 \
+docker exec kafka2 kafka-topics --bootstrap-server kafka2:19094 \
   --describe --topic demo-topic
 ```
 
@@ -408,7 +417,7 @@ docker start kafka1
 **Step 5: Verify ISR is restored:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic demo-topic
 ```
 
@@ -454,7 +463,7 @@ ISR should expand back to include all 3 brokers.
 **Step 1: Create a topic with min.insync.replicas=2:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --create --topic isr-demo --partitions 1 --replication-factor 3 \
   --config min.insync.replicas=2
 ```
@@ -462,14 +471,14 @@ docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
 **Step 2: Start a producer with acks=all:**
 
 ```bash
-docker exec -it kafka1 kafka-console-producer --bootstrap-server localhost:9092 \
+docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 \
   --topic isr-demo --producer-property acks=all
 ```
 
 **Step 3: In another terminal, check ISR:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic isr-demo
 ```
 
@@ -477,7 +486,7 @@ docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
 
 ```bash
 docker stop kafka2
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic isr-demo
 ```
 
@@ -487,7 +496,7 @@ ISR should show only 2 brokers. Producer **still works** (ISR=2 >= min.insync.re
 
 ```bash
 docker stop kafka3
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic isr-demo
 ```
 
@@ -544,21 +553,21 @@ docker start kafka2 kafka3
 **Step 1: Create a topic with 6 partitions:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --create --topic orders --partitions 6 --replication-factor 3
 ```
 
 **Step 2: Describe to see distribution:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic orders
 ```
 
 **Step 3: Count leaders per broker:**
 
 ```bash
-docker exec kafka1 kafka-topics --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --describe --topic orders | grep "Leader:" | awk '{print $4}' | sort | uniq -c
 ```
 
@@ -708,11 +717,23 @@ docker exec kafka1 kafka-configs --bootstrap-server localhost:9092 \
 
 ## Connection Details
 
+### Single Broker
+
 | Connection Type | Bootstrap Server |
 |-----------------|------------------|
 | From host machine | `localhost:9092` |
 | From Docker containers | `host.docker.internal:29092` |
-| Internal (between containers) | `kafka1:19092` |
+| Inside container (docker exec) | `localhost:9092` |
+
+### Multi-Broker (3 nodes)
+
+| Connection Type | Bootstrap Server |
+|-----------------|------------------|
+| From host machine | `localhost:9092` (or `localhost:9094`, `localhost:9096`) |
+| From Docker containers | `host.docker.internal:29092` |
+| Inside container (docker exec) | `kafka1:19092` (or `kafka2:19094`, `kafka3:19096`) |
+
+> **Note:** For multi-broker, when running `docker exec` commands, you **must** use the internal listener (e.g., `kafka1:19092`) because the cluster metadata returns internal addresses that are only resolvable within the Docker network.
 
 ### Spring Boot Configuration
 

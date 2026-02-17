@@ -1,7 +1,6 @@
 services:
   kafka1:
     image: confluentinc/cp-kafka:7.4.0
-    platform: linux/amd64
     hostname: kafka1
     container_name: kafka1
     ports:
@@ -27,7 +26,6 @@ services:
 
   kafka2:
     image: confluentinc/cp-kafka:7.4.0
-    platform: linux/amd64
     hostname: kafka2
     container_name: kafka2
     ports:
@@ -53,7 +51,6 @@ services:
 
   kafka3:
     image: confluentinc/cp-kafka:7.4.0
-    platform: linux/amd64
     hostname: kafka3
     container_name: kafka3
     ports:
