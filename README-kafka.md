@@ -7,7 +7,6 @@ This guide covers running Kafka locally using Docker with KRaft mode (no Zookeep
 - [Prerequisites](#prerequisites)
 - [Starting Kafka](#starting-kafka)
   - [Single Broker](#single-broker)
-  - [Multi-Broker (3 nodes)](#multi-broker-3-nodes)
   - [Verify Kafka is Running](#verify-kafka-is-running)
   - [Connection Summary](#connection-summary)
 - [Stopping Kafka](#stopping-kafka)
@@ -60,12 +59,6 @@ This guide covers running Kafka locally using Docker with KRaft mode (no Zookeep
 
 ```bash
 docker-compose up -d
-```
-
-### Multi-Broker (3 nodes)
-
-```bash
-docker-compose -f docker-compose-multi-broker.yml up -d
 ```
 
 ### Verify Kafka is Running
