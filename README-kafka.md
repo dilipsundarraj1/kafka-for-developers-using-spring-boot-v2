@@ -295,30 +295,43 @@ docker exec kafka3 ls -la /var/lib/kafka/data/ | grep demo-topic
 
 All 3 brokers should show `demo-topic-0`, `demo-topic-1`, and `demo-topic-2` directories.
 
-**Step 3: View the actual data on each broker using kafka-dump-log:**
+**Step 3: Find which partition has data:**
+
+Without message keys, Kafka uses sticky partitioning - all messages in a batch go to the same partition. First, check which partition has data:
 
 ```bash
-# View data on Broker 1 (partition 0)
+# Check log file sizes to find which partition has data
+docker exec kafka1 ls -la /var/lib/kafka/data/demo-topic-*/00000000000000000000.log
+```
+
+Look for the partition with a non-zero file size (e.g., 228 bytes instead of 0).
+
+**Step 4: View the actual data on each broker using kafka-dump-log:**
+
+Replace `demo-topic-1` with whichever partition has data:
+
+```bash
+# View data on Broker 1
 docker exec kafka1 kafka-dump-log \
-  --files /var/lib/kafka/data/demo-topic-0/00000000000000000000.log \
+  --files /var/lib/kafka/data/demo-topic-1/00000000000000000000.log \
   --print-data-log
 
-# View data on Broker 2 (partition 0) - SAME DATA!
+# View data on Broker 2 - SAME DATA!
 docker exec kafka2 kafka-dump-log \
-  --files /var/lib/kafka/data/demo-topic-0/00000000000000000000.log \
+  --files /var/lib/kafka/data/demo-topic-1/00000000000000000000.log \
   --print-data-log
 
-# View data on Broker 3 (partition 0) - SAME DATA!
+# View data on Broker 3 - SAME DATA!
 docker exec kafka3 kafka-dump-log \
-  --files /var/lib/kafka/data/demo-topic-0/00000000000000000000.log \
+  --files /var/lib/kafka/data/demo-topic-1/00000000000000000000.log \
   --print-data-log
 ```
 
 **What you'll see:**
 
 ```
-Dumping /var/lib/kafka/data/demo-topic-0/00000000000000000000.log
-Starting offset: 0
+Dumping /var/lib/kafka/data/demo-topic-1/00000000000000000000.log
+Log starting offset: 0
 baseOffset: 0 ... payload: message1
 baseOffset: 1 ... payload: message2
 baseOffset: 2 ... payload: message3
@@ -333,13 +346,13 @@ baseOffset: 2 ... payload: message3
 │                                                                             │
 │   Broker 1 (kafka1)          Broker 2 (kafka2)          Broker 3 (kafka3)   │
 │   /var/lib/kafka/data/       /var/lib/kafka/data/       /var/lib/kafka/data/│
-│   └── demo-topic-0/          └── demo-topic-0/          └── demo-topic-0/   │
+│   └── demo-topic-X/          └── demo-topic-X/          └── demo-topic-X/   │
 │       └── ...00000.log           └── ...00000.log           └── ...00000.log│
 │           offset 0: msg1             offset 0: msg1             offset 0: msg1│
 │           offset 1: msg2             offset 1: msg2             offset 1: msg2│
 │           offset 2: msg3             offset 2: msg3             offset 2: msg3│
 │                                                                             │
-│   IDENTICAL DATA ON ALL 3 BROKERS!                                          │
+│   IDENTICAL DATA ON ALL 3 BROKERS! (X = partition with data)                │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
