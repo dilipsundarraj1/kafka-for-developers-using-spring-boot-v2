@@ -2,6 +2,7 @@ package com.learnkafka.controller;
 
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.domain.validation.PostValidation;
+import com.learnkafka.producer.LibraryEventProducer;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,11 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class LibraryEventsController {
     private static final Logger logger = LoggerFactory.getLogger(LibraryEventsController.class);
+    private final LibraryEventProducer libraryEventProducer;
+
+    public LibraryEventsController(LibraryEventProducer libraryEventProducer) {
+        this.libraryEventProducer = libraryEventProducer;
+    }
 
     /**
      * POST /v1/library-events - Create a new library event
@@ -32,6 +38,8 @@ public class LibraryEventsController {
 
         // Log the details of the received event
         logger.debug("Library Event Type: {}, Book: {}", libraryEvent.libraryEventType(), libraryEvent.book());
+
+        libraryEventProducer.sendLibraryEvent(libraryEvent);
 
         // TODO: Publish event to Kafka
         logger.info("Library event created successfully: {}", libraryEvent);

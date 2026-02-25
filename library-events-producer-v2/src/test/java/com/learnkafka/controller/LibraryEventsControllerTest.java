@@ -3,12 +3,14 @@ package com.learnkafka.controller;
 import com.learnkafka.domain.Book;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.domain.LibraryEventType;
+import com.learnkafka.producer.LibraryEventProducer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
@@ -23,6 +25,9 @@ class LibraryEventsControllerTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @MockitoBean
+    private LibraryEventProducer libraryEventProducer;
 
     private Book validBook;
     private LibraryEvent validAddEvent;
