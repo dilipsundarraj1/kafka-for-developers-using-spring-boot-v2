@@ -175,6 +175,71 @@ graph TB
 6. **Acknowledgment**: Broker acknowledges receipt
 7. **Callback Execution**: Success or error callbacks are triggered
 
+## Common KafkaTemplate Methods
+
+### 1. Synchronous Send (Blocking)
+```java
+// Returns a ListenableFuture that blocks until message is sent
+SendResult<Integer, LibraryEvent> result = 
+    kafkaTemplate.send(topic, event).get(3, TimeUnit.SECONDS);
+```
+
+**Pros:**
+- Guarantees message delivery before method returns
+- Simplest to implement
+- Easy error handling
+
+**Cons:**
+- Blocks the calling thread
+- Lower throughput
+- Can cause performance issues under high load
+
+### 2. Asynchronous Send (Non-blocking)
+```java
+// Returns a ListenableFuture immediately
+ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
+    kafkaTemplate.send(topic, event);
+```
+
+**Pros:**
+- Non-blocking
+- Higher throughput
+- Better performance
+
+**Cons:**
+- Must handle success/error callbacks
+- More complex error handling
+
+### 3. Send with Callbacks
+```java
+ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
+    kafkaTemplate.send(topic, key, event);
+
+future.addCallback(
+    new ListenableFutureCallback<SendResult<Integer, LibraryEvent>>() {
+        @Override
+        public void onSuccess(SendResult<Integer, LibraryEvent> result) {
+            // Handle success
+            log.info("Message sent successfully: {}", result.getProducerRecord());
+        }
+        
+        @Override
+        public void onFailure(Throwable ex) {
+            // Handle failure
+            log.error("Failed to send message", ex);
+        }
+    }
+);
+```
+
+### 4. Send with Topic, Key, and Value
+```java
+// Topic: "library-events"
+// Key: 1 (libraryEventId)
+// Value: LibraryEvent object
+kafkaTemplate.send(topic, 1, libraryEvent);
+```
+
 ## Under the Hood: What Happens Inside KafkaTemplate.send()
 
 When you call `kafkaTemplate.send(topic, key, value)`, a complex sequence of operations occurs behind the scenes. Understanding this process is crucial for optimizing performance and debugging issues.
@@ -845,71 +910,6 @@ public class LibraryEventProducer {
 | `bootstrap-servers` | Kafka broker address for initial connection |
 | `key-serializer` | Converts Integer keys to bytes |
 | `value-serializer` | Converts LibraryEvent objects to JSON bytes |
-
-## Common KafkaTemplate Methods
-
-### 1. Synchronous Send (Blocking)
-```java
-// Returns a ListenableFuture that blocks until message is sent
-SendResult<Integer, LibraryEvent> result = 
-    kafkaTemplate.send(topic, event).get(3, TimeUnit.SECONDS);
-```
-
-**Pros:**
-- Guarantees message delivery before method returns
-- Simplest to implement
-- Easy error handling
-
-**Cons:**
-- Blocks the calling thread
-- Lower throughput
-- Can cause performance issues under high load
-
-### 2. Asynchronous Send (Non-blocking)
-```java
-// Returns a ListenableFuture immediately
-ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
-    kafkaTemplate.send(topic, event);
-```
-
-**Pros:**
-- Non-blocking
-- Higher throughput
-- Better performance
-
-**Cons:**
-- Must handle success/error callbacks
-- More complex error handling
-
-### 3. Send with Callbacks
-```java
-ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
-    kafkaTemplate.send(topic, key, event);
-
-future.addCallback(
-    new ListenableFutureCallback<SendResult<Integer, LibraryEvent>>() {
-        @Override
-        public void onSuccess(SendResult<Integer, LibraryEvent> result) {
-            // Handle success
-            log.info("Message sent successfully: {}", result.getProducerRecord());
-        }
-        
-        @Override
-        public void onFailure(Throwable ex) {
-            // Handle failure
-            log.error("Failed to send message", ex);
-        }
-    }
-);
-```
-
-### 4. Send with Topic, Key, and Value
-```java
-// Topic: "library-events"
-// Key: 1 (libraryEventId)
-// Value: LibraryEvent object
-kafkaTemplate.send(topic, 1, libraryEvent);
-```
 
 ## Message Key and Value
 
