@@ -69,17 +69,29 @@ sequenceDiagram
     
     Note over KT,Ser: 2. Serialization
     KT->>Ser: serialize(key)
+    activate Ser
     Ser-->>KT: byte[4]
+    deactivate Ser
     KT->>Ser: serialize(value)
+    activate Ser
     Ser-->>KT: byte[180] (JSON)
+    deactivate Ser
     
     Note over Part: 3. Producer Metadata
     KT->>Part: getPartition(topic, key)
+    activate Part
     Part-->>KT: partition=0
+    deactivate Part
     
     Note over Buffer: 4. Batching & Buffering
     KT->>Buffer: append(record, partition)
+    activate Buffer
     Buffer-->>KT: RecordAccumulator
+    deactivate Buffer
+    KT-->>App: ListenableFuture<SendResult>
+    deactivate KT
+    
+    Note over Buffer: Messages accumulate in buffer
     
     alt Batch Ready (full or timeout)
         Note over IO: 5. Network Send
@@ -90,19 +102,18 @@ sequenceDiagram
         
         Note over Broker,Log: 6. Acknowledgment
         Broker->>Log: write to partition
+        activate Log
         Log-->>Broker: offset assigned
+        deactivate Log
         Broker-->>IO: ACK(offset, metadata)
         deactivate Broker
         
-        Note over KT: 7. Callback Execution
-        IO->>KT: Success Callback
+        Note over IO: 7. Callback Execution
+        IO->>App: Success Callback with RecordMetadata
         deactivate IO
-        KT->>App: RecordMetadata(topic, partition, offset)
-        deactivate KT
-    else Buffer Waiting
-        KT-->>App: ListenableFuture<SendResult>
-        deactivate KT
-        Note over App: Non-blocking return
+    else Error Occurred
+        Note over IO: Retry or Fail
+        IO->>App: Error Callback with Exception
     end
 ```
 
