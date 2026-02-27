@@ -29,24 +29,26 @@ In the Library Events Producer, `KafkaTemplate` is used to publish library event
 graph TD
     A["Application Code<br/>Creates LibraryEvent"] --> B["KafkaTemplate.send()<br/>(topic, key, value)"]
     B --> C["Serialization Layer<br/>Key → bytes<br/>Value → JSON → bytes"]
-    C --> D["Kafka Producer<br/>Internal Buffer"]
-    D --> E["Network Layer<br/>TCP Connection"]
-    E --> F["Kafka Broker<br/>Receives Message"]
-    F --> G["Topic Partition<br/>Persisted to Log"]
-    G --> H["Broker Sends ACK"]
-    H --> I["Callback Executed<br/>Success/Failure Handler"]
-    I --> J["Application Continues"]
+    C --> D["Partitioner Layer<br/>Determine Partition<br/>hash(key) % partitions"]
+    D --> E["Kafka Producer<br/>Internal Buffer<br/>Batching & Buffering"]
+    E --> F["Network Layer<br/>TCP Connection"]
+    F --> G["Kafka Broker<br/>Receives Message"]
+    G --> H["Topic Partition<br/>Persisted to Log"]
+    H --> I["Broker Sends ACK"]
+    I --> J["Callback Executed<br/>Success/Failure Handler"]
+    J --> K["Application Continues"]
     
     style A fill:#FFE4B5
     style B fill:#87CEEB
     style C fill:#98FB98
-    style D fill:#DDA0DD
-    style E fill:#F0E68C
-    style F fill:#90EE90
-    style G fill:#FFB6C1
-    style H fill:#90EE90
-    style I fill:#87CEEB
-    style J fill:#FFE4B5
+    style D fill:#F0E68C
+    style E fill:#DDA0DD
+    style F fill:#FFD700
+    style G fill:#90EE90
+    style H fill:#FFB6C1
+    style I fill:#90EE90
+    style J fill:#87CEEB
+    style K fill:#FFE4B5
 ```
 
 ### Message Sending Process
