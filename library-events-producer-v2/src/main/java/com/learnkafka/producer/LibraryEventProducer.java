@@ -47,5 +47,31 @@ public class LibraryEventProducer {
 
         return future;
     }
+
+    public SendResult<Integer, LibraryEvent> sendLibraryEventSynchronous(LibraryEvent libraryEvent)
+            throws Exception {
+        Integer key = libraryEvent.libraryEventId();
+        logger.debug("Attempting to publish library event synchronously. key={} event={}", key, libraryEvent);
+
+        try {
+            SendResult<Integer, LibraryEvent> result =
+                    key == null
+                            ? kafkaTemplate.send(topicName, libraryEvent).get()
+                            : kafkaTemplate.send(topicName, key, libraryEvent).get();
+
+            logger.info(
+                    "Published library event synchronously. topic={} partition={} offset={} key={} event={}",
+                    result.getRecordMetadata().topic(),
+                    result.getRecordMetadata().partition(),
+                    result.getRecordMetadata().offset(),
+                    key,
+                    libraryEvent);
+
+            return result;
+        } catch (Exception ex) {
+            logger.error("Failed to publish library event synchronously. key={} event={}", key, libraryEvent, ex);
+            throw ex;
+        }
+    }
 }
 
