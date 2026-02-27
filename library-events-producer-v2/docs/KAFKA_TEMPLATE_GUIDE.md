@@ -240,7 +240,7 @@ future.addCallback(
 kafkaTemplate.send(topic, 1, libraryEvent);
 ```
 
-## Under the Hood: What Happens Inside KafkaTemplate.send()
+## Deep Dive: What Happens inside KafkaTemplate.send()
 
 When you call `kafkaTemplate.send(topic, key, value)`, a complex sequence of operations occurs behind the scenes. Understanding this process is crucial for optimizing performance and debugging issues.
 
