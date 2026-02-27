@@ -5,18 +5,18 @@
 ```mermaid
 flowchart LR
   subgraph Client
-    A[REST Client]
+    A["REST Client"]
   end
 
-  subgraph Service[Library Events Producer Service]
-    B[LibraryEventsController<br/>POST /v1/library-events<br/>PUT /v1/library-events]
-    C[Validation<br/>Bean Validation]
-    D[LibraryEventProducer<br/>KafkaTemplate]
-    E[Retry Strategy<br/>at-least-once]
+  subgraph Service["Library Events Producer Service"]
+    B["LibraryEventsController<br/>(POST/PUT /v1/library-events)"]
+    C["Validation<br/>(Bean Validation)"]
+    D["LibraryEventProducer<br/>(KafkaTemplate)"]
+    E["Retry Strategy<br/>(at-least-once)"]
   end
 
-  subgraph Kafka[Kafka Broker Infrastructure]
-    F[Topic: library-events<br/>Partitions: 1]
+  subgraph Kafka["Kafka Broker Infrastructure"]
+    F["Topic: library-events<br/>(Partitions: 1)"]
   end
 
   A -->|REST JSON| B -->|Validate| C -->|Serialize| D -->|Publish| E -->|Send| F
@@ -27,18 +27,18 @@ flowchart LR
 ```mermaid
 flowchart TB
   subgraph Testing["Integration Testing Layer"]
-    T1[LibraryEventsControllerIntegrationTest]
-    T2[@SpringBootTest<br/>@AutoConfigureMockMvc<br/>@EmbeddedKafka]
+    T1["LibraryEventsControllerIntegrationTest"]
+    T2["@SpringBootTest<br/>@AutoConfigureMockMvc<br/>@EmbeddedKafka"]
   end
 
-  subgraph Service2[Library Events Producer Service]
-    B2[LibraryEventsController]
-    C2[Validation]
-    D2[LibraryEventProducer]
+  subgraph Service2["Library Events Producer Service"]
+    B2["LibraryEventsController"]
+    C2["Validation"]
+    D2["LibraryEventProducer"]
   end
 
-  subgraph EmbeddedKafka["Embedded Kafka<br/>In-Memory Broker"]
-    F2[library-events Topic<br/>Partitions: 1]
+  subgraph EmbeddedKafka["Embedded Kafka<br/>(In-Memory Broker)"]
+    F2["library-events Topic<br/>(Partitions: 1)"]
   end
 
   T1 -->|Triggers Tests| T2
