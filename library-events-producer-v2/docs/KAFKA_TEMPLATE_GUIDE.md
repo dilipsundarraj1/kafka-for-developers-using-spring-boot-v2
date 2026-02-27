@@ -24,21 +24,238 @@ In the Library Events Producer, `KafkaTemplate` is used to publish library event
 ## How KafkaTemplate Works
 
 ### Basic Flow
-```
-Application Code
-    ↓
-KafkaTemplate.send(topic, message)
-    ↓
-Serialization (converts Java object to bytes)
-    ↓
-Kafka Producer
-    ↓
-Kafka Broker
-    ↓
-Topic Partition
+
+```mermaid
+graph TD
+    A["Application Code<br/>Creates LibraryEvent"] --> B["KafkaTemplate.send()<br/>(topic, key, value)"]
+    B --> C["Serialization Layer<br/>Key → bytes<br/>Value → JSON → bytes"]
+    C --> D["Kafka Producer<br/>Internal Buffer"]
+    D --> E["Network Layer<br/>TCP Connection"]
+    E --> F["Kafka Broker<br/>Receives Message"]
+    F --> G["Topic Partition<br/>Persisted to Log"]
+    G --> H["Broker Sends ACK"]
+    H --> I["Callback Executed<br/>Success/Failure Handler"]
+    I --> J["Application Continues"]
+    
+    style A fill:#FFE4B5
+    style B fill:#87CEEB
+    style C fill:#98FB98
+    style D fill:#DDA0DD
+    style E fill:#F0E68C
+    style F fill:#90EE90
+    style G fill:#FFB6C1
+    style H fill:#90EE90
+    style I fill:#87CEEB
+    style J fill:#FFE4B5
 ```
 
 ### Message Sending Process
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application
+    participant KT as KafkaTemplate
+    participant Ser as Serializer
+    participant Part as Partitioner
+    participant Buffer as Message Buffer
+    participant IO as I/O Thread
+    participant Broker as Kafka Broker
+    participant Log as Partition Log
+    
+    Note over App: 1. Message Creation
+    App->>KT: send("library-events", 1, event)
+    activate KT
+    
+    Note over KT,Ser: 2. Serialization
+    KT->>Ser: serialize(key)
+    Ser-->>KT: byte[4]
+    KT->>Ser: serialize(value)
+    Ser-->>KT: byte[180] (JSON)
+    
+    Note over Part: 3. Producer Metadata
+    KT->>Part: getPartition(topic, key)
+    Part-->>KT: partition=0
+    
+    Note over Buffer: 4. Batching & Buffering
+    KT->>Buffer: append(record, partition)
+    Buffer-->>KT: RecordAccumulator
+    
+    alt Batch Ready (full or timeout)
+        Note over IO: 5. Network Send
+        Buffer->>IO: flush batch
+        activate IO
+        IO->>Broker: NetworkSend(batch)
+        activate Broker
+        
+        Note over Broker,Log: 6. Acknowledgment
+        Broker->>Log: write to partition
+        Log-->>Broker: offset assigned
+        Broker-->>IO: ACK(offset, metadata)
+        deactivate Broker
+        
+        Note over KT: 7. Callback Execution
+        IO->>KT: Success Callback
+        deactivate IO
+        KT->>App: RecordMetadata(topic, partition, offset)
+        deactivate KT
+    else Buffer Waiting
+        KT-->>App: ListenableFuture<SendResult>
+        deactivate KT
+        Note over App: Non-blocking return
+    end
+```
+
+### Component Interaction Diagram
+
+```mermaid
+graph LR
+    subgraph Application ["Application Layer"]
+        A1["Controller"]
+        A2["Service"]
+    end
+    
+    subgraph SpringKafka ["Spring Kafka Layer"]
+        B1["KafkaTemplate"]
+        B2["ProducerFactory"]
+        B3["Serializers"]
+    end
+    
+    subgraph KafkaClient ["Apache Kafka Client"]
+        C1["KafkaProducer"]
+        C2["RecordAccumulator"]
+        C3["Sender Thread"]
+        C4["NetworkClient"]
+    end
+    
+    subgraph KafkaCluster ["Kafka Cluster"]
+        D1["Broker 1<br/>(Leader)"]
+        D2["Broker 2<br/>(Replica)"]
+        D3["Broker 3<br/>(Replica)"]
+    end
+    
+    A1 --> A2
+    A2 --> B1
+    B1 --> B2
+    B1 --> B3
+    B2 --> C1
+    B3 --> C1
+    C1 --> C2
+    C2 --> C3
+    C3 --> C4
+    C4 --> D1
+    D1 -.Replication.-> D2
+    D1 -.Replication.-> D3
+    
+    style A1 fill:#FFE4B5
+    style A2 fill:#FFE4B5
+    style B1 fill:#87CEEB
+    style B2 fill:#87CEEB
+    style B3 fill:#87CEEB
+    style C1 fill:#98FB98
+    style C2 fill:#98FB98
+    style C3 fill:#98FB98
+    style C4 fill:#98FB98
+    style D1 fill:#90EE90
+    style D2 fill:#DDA0DD
+    style D3 fill:#DDA0DD
+```
+
+### Lifecycle State Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ready: KafkaTemplate Initialized
+    
+    Ready --> Sending: send() invoked
+    
+    Sending --> Serializing: Validate inputs
+    Serializing --> Partitioning: Key & Value → bytes
+    Partitioning --> Buffering: Determine partition
+    Buffering --> Accumulating: Add to batch
+    
+    Accumulating --> Accumulating: Waiting for more messages
+    Accumulating --> Sending_Batch: Batch full OR linger.ms timeout
+    
+    Sending_Batch --> InFlight: I/O thread sends
+    InFlight --> Acknowledged: Broker responds
+    InFlight --> Retrying: Network error
+    
+    Retrying --> InFlight: Backoff complete
+    Retrying --> Failed: Max retries exceeded
+    
+    Acknowledged --> Success_Callback: RecordMetadata available
+    Failed --> Error_Callback: Exception details
+    
+    Success_Callback --> Ready: Return to pool
+    Error_Callback --> Ready: Return to pool
+    
+    note right of Accumulating
+        Messages wait here
+        for batching
+    end note
+    
+    note right of InFlight
+        Network transmission
+        in progress
+    end note
+    
+    style Ready fill:#90EE90
+    style Acknowledged fill:#90EE90
+    style Success_Callback fill:#90EE90
+    style Failed fill:#FF6B6B
+    style Error_Callback fill:#FFB6C6
+    style Retrying fill:#FFD700
+```
+
+### Thread Model
+
+```mermaid
+graph TB
+    subgraph AppThreads ["Application Threads"]
+        T1["Request Thread 1"]
+        T2["Request Thread 2"]
+        T3["Request Thread 3"]
+    end
+    
+    subgraph KafkaTemplate ["KafkaTemplate (Singleton, Thread-Safe)"]
+        KT["KafkaTemplate<br/>send() method"]
+    end
+    
+    subgraph ProducerThreads ["Kafka Producer Threads"]
+        MT["Main Thread<br/>(Serialization & Batching)"]
+        IOT["I/O Sender Thread<br/>(Network Operations)"]
+    end
+    
+    subgraph CallbackThreads ["Callback Executor"]
+        CB1["Callback Thread 1"]
+        CB2["Callback Thread 2"]
+    end
+    
+    T1 -->|Concurrent Calls| KT
+    T2 -->|Concurrent Calls| KT
+    T3 -->|Concurrent Calls| KT
+    
+    KT -->|Delegates| MT
+    MT -->|Enqueues| IOT
+    
+    IOT -->|Success| CB1
+    IOT -->|Failure| CB2
+    
+    CB1 -.Notifies.-> T1
+    CB2 -.Notifies.-> T2
+    
+    style T1 fill:#FFE4B5
+    style T2 fill:#FFE4B5
+    style T3 fill:#FFE4B5
+    style KT fill:#87CEEB
+    style MT fill:#98FB98
+    style IOT fill:#90EE90
+    style CB1 fill:#DDA0DD
+    style CB2 fill:#FFB6C1
+```
+
+**Key Points:**
 1. **Message Creation**: Application creates a message object
 2. **Serialization**: KafkaTemplate serializes the message to bytes
 3. **Producer Metadata**: Kafka producer gathers broker metadata
@@ -46,6 +263,635 @@ Topic Partition
 5. **Network Send**: Messages are sent to the Kafka broker
 6. **Acknowledgment**: Broker acknowledges receipt
 7. **Callback Execution**: Success or error callbacks are triggered
+
+## Under the Hood: What Happens Inside KafkaTemplate.send()
+
+When you call `kafkaTemplate.send(topic, key, value)`, a complex sequence of operations occurs behind the scenes. Understanding this process is crucial for optimizing performance and debugging issues.
+
+### Step-by-Step Execution Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Application calls: kafkaTemplate.send("library-events", 1, event)
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. INTERCEPT & VALIDATE
+│    - Check if topic exists in metadata
+│    - Validate topic name format
+│    - Check if message is null
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. SERIALIZATION
+│    ├─ Key Serialization: Integer → bytes
+│    │   Input: 1 (Integer)
+│    │   Process: IntegerSerializer.serialize()
+│    │   Output: [0, 0, 0, 1] (4 bytes)
+│    │
+│    └─ Value Serialization: LibraryEvent → JSON → bytes
+│        Input: LibraryEvent object
+│        Process: JsonSerializer.serialize()
+│        Output: {"libraryEventId":1,...} → bytes
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. PARTITIONING
+│    - Determine target partition using partition assignment
+│    - Key-based partitioning: hash(key) % num_partitions
+│    - Result: Partition 0 (in single partition topic)
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. COMPRESSION (if enabled)
+│    - Apply compression codec (snappy/lz4/gzip/zstd)
+│    - Compress serialized bytes
+│    - Store compression type in message header
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 5. RECORD METADATA & HEADERS
+│    - Attach timestamp (current time)
+│    - Assign sequence number
+│    - Add custom headers (if any)
+│    - Create ProducerRecord object
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 6. BATCHING & BUFFERING
+│    - Add to accumulated batch for topic-partition
+│    - Check if batch is full (batch-size)
+│    - Check if time limit reached (linger-ms)
+│    - If either condition met → flush batch
+│    - Otherwise → wait for more messages
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 7. BROKER METADATA CHECK
+│    - Verify broker connection is healthy
+│    - Get metadata for partition leader
+│    - Determine which broker to send to
+│    - Maintain broker connection pool
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 8. SEND TO BROKER
+│    - Create network request with batched messages
+│    - Use producer I/O thread to send asynchronously
+│    - Apply timeout (request.timeout.ms)
+│    - Handle backpressure if broker is slow
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 9. BROKER PROCESSING
+│    - Broker receives messages
+│    - Validates message format
+│    - Writes to log file (persists to disk)
+│    - Replicates to follower brokers (if configured)
+│    - Applies acks policy
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 10. ACKNOWLEDGMENT & CALLBACK
+│    - Broker sends back acknowledgment
+│    - Callback executor invokes success/error handler
+│    - Return ListenableFuture with metadata
+│    - Application receives: topic, partition, offset
+└────────────┬────────────────────────────────────────────────────┘
+             ↓
+Return to Application
+```
+
+### 1. Serialization Deep Dive
+
+Serialization is the process of converting Java objects into bytes that can be transmitted over the network.
+
+#### Key Serialization Flow
+```java
+Input Object:
+  Integer key = 1
+
+Step 1: Select Serializer
+  Configured: IntegerSerializer
+  
+Step 2: Call serialize(topic, data)
+  IntegerSerializer.serialize("library-events", 1)
+  
+Step 3: Convert to Bytes
+  Integer 1 → [0, 0, 0, 1] (4-byte representation in big-endian)
+  
+Output Bytes: [0, 0, 0, 1]
+```
+
+#### Value Serialization Flow
+```java
+Input Object:
+  LibraryEvent {
+    libraryEventId: 1,
+    libraryEventType: "ADD",
+    book: {
+      bookId: 10,
+      bookName: "Clean Code",
+      bookAuthor: "Robert C. Martin"
+    }
+  }
+
+Step 1: Select Serializer
+  Configured: JsonSerializer
+  
+Step 2: Convert to JSON String
+  {
+    "libraryEventId": 1,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 10,
+      "bookName": "Clean Code",
+      "bookAuthor": "Robert C. Martin"
+    }
+  }
+  
+Step 3: Convert JSON String to UTF-8 Bytes
+  String → byte[] (UTF-8 encoding)
+  
+Step 4: Add Headers
+  - Serialization format info
+  - Content type: application/json
+  
+Output Bytes: 
+  [{json_bytes}, headers_metadata]
+  Size: ~180 bytes (typical)
+```
+
+#### Serialization Configuration
+```yaml
+spring:
+  kafka:
+    producer:
+      # Key serializer: converts key type to bytes
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      
+      # Value serializer: converts value type to bytes
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      
+      # Additional properties
+      properties:
+        # Use header to store type information
+        spring.json.type.mapping: 
+          libraryEvent:com.learnkafka.domain.LibraryEvent
+```
+
+#### Custom Serializer Example
+```java
+public class CustomLibraryEventSerializer 
+    implements Serializer<LibraryEvent> {
+    
+    private ObjectMapper objectMapper = new ObjectMapper();
+    
+    @Override
+    public byte[] serialize(String topic, LibraryEvent event) {
+        try {
+            // Custom serialization logic
+            String json = objectMapper.writeValueAsString(event);
+            return json.getBytes(StandardCharsets.UTF_8);
+        } catch (JsonProcessingException e) {
+            throw new SerializationException("Failed to serialize", e);
+        }
+    }
+    
+    @Override
+    public void close() {
+        // Cleanup resources if needed
+    }
+}
+```
+
+### 2. Partitioning Deep Dive
+
+Partitioning determines which partition receives the message. This is critical for ordering and performance.
+
+#### Partition Assignment Process
+
+```
+Input: 
+  - Topic: "library-events"
+  - Key: 1 (libraryEventId)
+  - Number of partitions: 1
+
+Step 1: Hash the Key
+  hash(1) = 12345 (deterministic hash function)
+  
+Step 2: Apply Modulo
+  12345 % 1 = 0  (remainder after dividing by partition count)
+  
+Step 3: Select Partition
+  Target Partition = 0
+  
+Output: Partition 0
+```
+
+#### Multi-Partition Example
+```
+Topic: "library-events" with 3 partitions
+
+Message 1: key=1  → hash(1)=12345 → 12345 % 3 = 0 → Partition 0
+Message 2: key=2  → hash(2)=67890 → 67890 % 3 = 0 → Partition 0
+Message 3: key=5  → hash(5)=99999 → 99999 % 3 = 0 → Partition 0
+Message 4: key=7  → hash(7)=45678 → 45678 % 3 = 0 → Partition 0
+
+Partition Distribution:
+  Partition 0: [msg1, msg2, msg3, msg4]  (same key range)
+  Partition 1: []
+  Partition 2: []
+```
+
+#### Custom Partitioner Implementation
+```java
+public class BookIdPartitioner implements Partitioner {
+    
+    @Override
+    public int partition(String topic, Object key, byte[] keyBytes,
+                        Object value, byte[] valueBytes,
+                        Cluster cluster) {
+        if (key == null) {
+            return 0; // Default to partition 0
+        }
+        
+        Integer libraryEventId = (Integer) key;
+        
+        // Custom logic: even IDs → partition 0, odd IDs → partition 1
+        int partitionCount = cluster.partitionsForTopic(topic).size();
+        return (libraryEventId % 2) % partitionCount;
+    }
+    
+    @Override
+    public void close() {}
+    
+    @Override
+    public void configure(Map<String, ?> configs) {}
+}
+```
+
+#### Ordering Guarantee
+```
+Same key → Same partition → Messages are ordered
+
+Partition 0 (ordered for key=1):
+  [Offset 0]: LibraryEvent {id: 1, type: ADD, ...}
+  [Offset 1]: LibraryEvent {id: 1, type: UPDATE, ...}
+  [Offset 2]: LibraryEvent {id: 1, type: DELETE, ...}
+  
+Consumer reads in order → Maintains event sequence
+```
+
+### 3. Batching & Buffering Deep Dive
+
+Batching is the process of accumulating multiple messages before sending them to the broker, improving efficiency and throughput.
+
+#### Batching Process
+
+```
+Timeline of Message Arrivals:
+
+T=0ms:   Message 1 arrives (2KB)
+         ├─ Add to buffer for partition-0
+         ├─ Current batch size: 2KB
+         └─ Continue waiting
+
+T=2ms:   Message 2 arrives (3KB)
+         ├─ Add to buffer for partition-0
+         ├─ Current batch size: 5KB
+         └─ Continue waiting
+
+T=5ms:   Message 3 arrives (8KB)
+         ├─ Add to buffer for partition-0
+         ├─ Current batch size: 13KB
+         └─ Continue waiting
+
+T=8ms:   Message 4 arrives (5KB)
+         ├─ Add to buffer for partition-0
+         ├─ Current batch size: 18KB
+         ├─ BATCH SIZE LIMIT REACHED! (18KB > 16KB)
+         └─ FLUSH BATCH IMMEDIATELY!
+         
+         ╔═════════════════════════════════════════╗
+         ║ Send 4 messages in one network request  ║
+         ║ - Reduced overhead                      ║
+         ║ - One TCP round trip instead of 4       ║
+         ║ - Better throughput                     ║
+         ╚═════════════════════════════════════════╝
+
+T=10ms:  Message 5 arrives (1KB)
+         ├─ Add to new batch for partition-0
+         ├─ Current batch size: 1KB
+         └─ Continue waiting
+
+T=20ms:  LINGER TIME EXCEEDED (10ms timeout reached)
+         ├─ Current batch size: 1KB (not full)
+         └─ FLUSH BATCH (to avoid excessive latency)
+```
+
+#### Batching Configuration Impact
+
+```yaml
+spring:
+  kafka:
+    producer:
+      # Batch size in bytes - how much data to accumulate
+      batch-size: 16384           # 16 KB
+      
+      # Linger time in milliseconds - max wait time
+      linger-ms: 10               # 10 ms
+      
+      # Total buffer allocated
+      buffer-memory: 33554432     # 32 MB
+```
+
+#### Throughput vs Latency Trade-off
+
+```
+Low Batch Settings (batch-size: 1024, linger-ms: 1):
+  ├─ More frequent flushes
+  ├─ Lower latency (faster individual message delivery)
+  ├─ More network round trips
+  └─ Lower throughput (messages per second)
+  
+Optimal Settings (batch-size: 16384, linger-ms: 10):
+  ├─ Balanced flushing
+  ├─ Reasonable latency
+  ├─ Efficient batching
+  └─ Good throughput
+  
+High Batch Settings (batch-size: 65536, linger-ms: 100):
+  ├─ Less frequent flushes
+  ├─ Higher latency (slower individual message delivery)
+  ├─ Fewer network round trips
+  └─ Higher throughput (more messages per second)
+```
+
+#### Memory Buffer Management
+
+```
+Total Buffer Memory: 32 MB
+
+Scenario 1: Multiple Topics
+  Topic A partition-0: 8 MB
+  Topic A partition-1: 8 MB
+  Topic B partition-0: 8 MB
+  Topic B partition-1: 8 MB
+  ─────────────────────────
+  Total allocated: 32 MB (fully utilized)
+
+Scenario 2: Slow Broker
+  If broker is slow to acknowledge:
+  ├─ Accumulates messages in buffer
+  ├─ Buffer fills up faster
+  ├─ May block send() calls when buffer exhausted
+  ├─ Applies backpressure to application
+  └─ max.block.ms: how long to wait before throwing exception
+     (default: 60 seconds)
+
+Configuration:
+spring:
+  kafka:
+    producer:
+      buffer-memory: 33554432      # 32 MB
+      max-block-ms: 60000          # 60 seconds
+      properties:
+        max.block.ms: 60000
+```
+
+### 4. Compression
+
+Compression reduces message size before sending to the broker, saving bandwidth and storage.
+
+#### Compression Types
+
+```
+No Compression (compression.type: none)
+  ├─ Original size: 1000 bytes
+  ├─ Compressed size: 1000 bytes
+  ├─ CPU overhead: 0%
+  └─ Network bandwidth: High
+
+Snappy Compression (compression.type: snappy)
+  ├─ Original size: 1000 bytes
+  ├─ Compressed size: 600 bytes (40% reduction)
+  ├─ CPU overhead: Low
+  ├─ Decompression speed: Fast
+  └─ Best for: Moderate compression, low latency
+
+LZ4 Compression (compression.type: lz4)
+  ├─ Original size: 1000 bytes
+  ├─ Compressed size: 550 bytes (45% reduction)
+  ├─ CPU overhead: Very Low
+  ├─ Decompression speed: Very Fast
+  └─ Best for: High throughput, low latency
+
+Gzip Compression (compression.type: gzip)
+  ├─ Original size: 1000 bytes
+  ├─ Compressed size: 400 bytes (60% reduction)
+  ├─ CPU overhead: High
+  ├─ Decompression speed: Moderate
+  └─ Best for: Maximum compression, can tolerate CPU usage
+
+ZSTD Compression (compression.type: zstd)
+  ├─ Original size: 1000 bytes
+  ├─ Compressed size: 350 bytes (65% reduction)
+  ├─ CPU overhead: Low
+  ├─ Decompression speed: Very Fast
+  └─ Best for: Maximum compression with low overhead
+```
+
+#### Compression Configuration
+
+```yaml
+spring:
+  kafka:
+    producer:
+      compression-type: snappy    # snappy | lz4 | gzip | zstd | none
+```
+
+#### Compression Example Flow
+
+```
+Original JSON Message (180 bytes):
+{
+  "libraryEventId": 1,
+  "libraryEventType": "ADD",
+  "book": {
+    "bookId": 10,
+    "bookName": "Clean Code",
+    "bookAuthor": "Robert C. Martin"
+  }
+}
+
+After Compression (snappy):
+[Binary data representing compressed JSON]
+Size: 120 bytes (33% reduction)
+Compression Header: snappy codec metadata
+
+Network Transmission:
+- Send 120 bytes instead of 180 bytes
+- Save ~25% bandwidth
+- Consumer auto-decompresses on receipt
+```
+
+### 5. Idempotence & Message Ordering
+
+Kafka can guarantee exactly-once delivery at the broker level with proper configuration.
+
+#### Idempotent Producer Configuration
+
+```yaml
+spring:
+  kafka:
+    producer:
+      acks: all                          # Wait for all replicas
+      retries: 2147483647               # Retry indefinitely
+      properties:
+        enable.idempotence: true          # Enable idempotence
+        max.in.flight.requests.per.connection: 5
+```
+
+#### How Idempotence Works
+
+```
+Message Send Attempt 1:
+  ├─ Broker receives message
+  ├─ Assigns sequence number: 0
+  ├─ Assigns offset: 100
+  └─ Sends ACK
+
+Message Send Attempt 2 (retry due to timeout):
+  ├─ Producer sends same message with sequence: 0
+  ├─ Broker detects duplicate (same producer ID + sequence)
+  ├─ Broker doesn't duplicate, returns same offset: 100
+  └─ Consumer never sees duplicate!
+```
+
+### 6. Acknowledgment Policies (Acks)
+
+Controls when producer considers a message "sent" based on broker replication.
+
+#### Acks Configuration
+
+```yaml
+spring:
+  kafka:
+    producer:
+      acks: all  # Possible values: 0, 1, all, -1
+```
+
+#### Acks Behavior
+
+| Acks Value | Behavior | Latency | Durability |
+|-----------|----------|---------|-----------|
+| **0** (none) | Producer doesn't wait for ACK | Very Low | Very Low - broker crash loses data |
+| **1** (leader) | Wait for leader ACK only | Low | Medium - replica crash loses data |
+| **all** / **-1** | Wait for all replicas ACK | High | Very High - survives broker failure |
+
+#### Acks Flow Example
+
+```
+acks=all (Replication factor=3):
+
+Producer sends message
+    ↓
+Broker 1 (Leader) receives
+    ├─ Writes to log
+    ├─ Replicates to Broker 2
+    ├─ Replicates to Broker 3
+    ↓ (once all write successfully)
+Broker 1 sends ACK to Producer
+    ↓
+Producer receives ACK → Message considered "sent"
+
+Durability: Message survives up to 2 broker failures!
+```
+
+### 7. Retry Mechanism
+
+Handles transient failures like broker unavailability.
+
+#### Retry Configuration
+
+```yaml
+spring:
+  kafka:
+    producer:
+      retries: 2147483647          # Nearly infinite retries
+      properties:
+        retry.backoff.ms: 100      # Wait 100ms between retries
+        request.timeout.ms: 30000  # 30 second timeout
+```
+
+#### Retry Flow
+
+```
+Attempt 1: Send message
+    ↓
+Broker unreachable (network error)
+    ↓
+Wait 100ms (retry.backoff.ms)
+    ↓
+Attempt 2: Send message
+    ↓
+Broker responds with error
+    ↓
+Wait 100ms
+    ↓
+Attempt 3: Send message
+    ↓
+Success → ACK received
+    ↓
+Message delivered (after retries)
+```
+
+### 8. RecordMetadata
+
+Information returned after successful send, available in callback.
+
+```java
+future.addCallback(
+    result -> {
+        RecordMetadata metadata = result.getRecordMetadata();
+        
+        // Available metadata:
+        String topic = metadata.topic();           // "library-events"
+        int partition = metadata.partition();       // 0
+        long offset = metadata.offset();           // 12345
+        long timestamp = metadata.timestamp();     // System time
+        int serializedKeySize = metadata.serializedKeySize();   // 4
+        int serializedValueSize = metadata.serializedValueSize(); // 180
+    },
+    ex -> {
+        // Handle error
+    }
+);
+```
+
+### 9. Back Pressure & Flow Control
+
+Prevents producer from overwhelming the broker.
+
+```
+Normal Flow:
+  Producer sends → Buffer → Broker processes → Producer continues
+  
+Slow Broker Flow:
+  Producer sends → Buffer fills → Backpressure applied
+    ↓
+  send() call blocks (waits for buffer space)
+    ↓
+  Application thread pauses
+    ↓
+  Broker catches up → Buffer space freed
+    ↓
+  send() returns → Application continues
+    
+Timeout:
+  If broker too slow, send() throws exception after max.block.ms
+```
 
 ## KafkaTemplate in Library Events Producer
 
@@ -428,6 +1274,346 @@ Error: java.lang.OutOfMemoryError
 Issue: High latency
 ```
 **Solution**: Increase `batch-size` and `linger-ms` for higher throughput
+
+## Visualizing KafkaTemplate with Mermaid Diagrams
+
+Mermaid is a JavaScript-based diagramming and charting tool that helps visualize complex concepts. Here are several diagrams that illustrate KafkaTemplate operations:
+
+### Message Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant KT as KafkaTemplate
+    participant Prod as Kafka Producer
+    participant Broker as Kafka Broker
+    participant Callback as Callback Handler
+
+    App->>KT: send(topic, key, value)
+    activate KT
+    KT->>KT: Serialize key & value
+    KT->>KT: Determine partition
+    KT->>KT: Add to batch buffer
+    
+    alt Batch full or timeout
+        KT->>Prod: Flush batch
+        activate Prod
+        Prod->>Broker: Send messages
+        activate Broker
+        Broker->>Broker: Write to log
+        Broker->>Prod: ACK with metadata
+        deactivate Broker
+        Prod->>Callback: Success callback
+        Callback->>App: Return RecordMetadata
+        deactivate Prod
+    else Waiting
+        KT->>App: Return ListenableFuture
+        deactivate KT
+    end
+```
+
+### Message Partitioning Flow
+
+```mermaid
+graph TB
+    A["Message arrives<br/>Key: 5<br/>Topic: library-events"] -->|Hash Function| B["hash5 = 45678"]
+    B -->|Modulo Operation| C["45678 % 3 partitions"]
+    C -->|Result| D["45678 % 3 = 0"]
+    D -->|Assigned to| E["Partition 0"]
+    
+    F["Message 2<br/>Key: 7"] -->|Hash| G["hash7 = 12345"]
+    G -->|Modulo| H["12345 % 3 = 0"]
+    H -->|Assigned to| E
+    
+    I["Message 3<br/>Key: 11"] -->|Hash| J["hash11 = 67890"]
+    J -->|Modulo| K["67890 % 3 = 1"]
+    K -->|Assigned to| L["Partition 1"]
+    
+    M["Message 4<br/>Key: 15"] -->|Hash| N["hash15 = 99999"]
+    N -->|Modulo| O["99999 % 3 = 2"]
+    O -->|Assigned to| P["Partition 2"]
+    
+    style E fill:#90EE90
+    style L fill:#87CEEB
+    style P fill:#FFB6C1
+```
+
+### Batching Timeline Diagram
+
+```mermaid
+gantt
+    title KafkaTemplate Batching Timeline
+    dateFormat YYYY-MM-DD HH:mm:ss
+    
+    section Batch 1
+    Message 1  :msg1, 2026-02-27 10:00:00, 2m
+    Message 2  :msg2, after msg1, 2m
+    Message 3  :msg3, after msg2, 2m
+    Message 4  :msg4, after msg3, 2m
+    Batch Full :crit, batch1, after msg4, 0m
+    Send Batch :active, send1, after batch1, 1m
+    
+    section Batch 2
+    Message 5  :msg5, after msg1, 2m
+    Timeout    :crit, timeout, after msg5, 0m
+    Send Batch :active, send2, after timeout, 1m
+```
+
+### Serialization Process Flow
+
+```mermaid
+graph LR
+    A["LibraryEvent Object<br/>{id:1, type:ADD, book:{...}}"] -->|JsonSerializer| B["JSON String<br/>150 chars"]
+    B -->|UTF-8 Encode| C["Byte Array<br/>150 bytes"]
+    C -->|Add Headers| D["Wire Format<br/>~160 bytes"]
+    
+    E["Integer Key<br/>1"] -->|IntegerSerializer| F["Byte Array<br/>4 bytes"]
+    
+    D -->|Partition| G["Partition 0"]
+    F -->|Hash| G
+    
+    style A fill:#FFE4B5
+    style B fill:#FFE4B5
+    style C fill:#FFE4B5
+    style D fill:#FFE4B5
+    style E fill:#B0E0E6
+    style F fill:#B0E0E6
+    style G fill:#98FB98
+```
+
+### Producer State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: KafkaTemplate created
+    
+    Idle --> Serializing: send() called
+    Serializing --> Partitioning: Key & value serialized
+    Partitioning --> Buffering: Partition determined
+    
+    Buffering --> Waiting: Added to batch buffer
+    Waiting --> Waiting: Message timeout not reached<br/>and batch not full
+    
+    Waiting --> Flushing: Batch full OR timeout reached
+    Flushing --> NetworkSend: Batch ready to send
+    
+    NetworkSend --> Acknowledged: Broker ACK received
+    Acknowledged --> CallbackExecution: RecordMetadata ready
+    CallbackExecution --> Idle: Callback invoked
+    
+    NetworkSend --> Error: Broker error
+    Error --> Retrying: Retry attempt
+    Retrying --> NetworkSend: Retry backoff complete
+    Retrying --> Failed: Max retries exceeded
+    Failed --> ErrorCallback: Error callback invoked
+    ErrorCallback --> Idle
+    
+    style Idle fill:#90EE90
+    style Acknowledged fill:#90EE90
+    style Error fill:#FFB6C6
+    style Failed fill:#FF6B6B
+```
+
+### Concurrency Model
+
+```mermaid
+graph TB
+    A["Main Application Thread"] -->|send event| B["KafkaTemplate<br/>Thread-Safe"]
+    A -->|send event| C["Another Thread"]
+    C -->|send event| B
+    
+    B -->|Returns immediately| A
+    B -->|Returns immediately| C
+    
+    B -->|Uses I/O Thread Pool| D["I/O Thread 1"]
+    B -->|Uses I/O Thread Pool| E["I/O Thread 2"]
+    B -->|Uses I/O Thread Pool| F["I/O Thread 3"]
+    
+    D -->|Async Send| G["Kafka Broker"]
+    E -->|Async Send| G
+    F -->|Async Send| G
+    
+    G -->|Callback| H["Callback Executor Thread"]
+    H -->|Execute Success| I["onSuccess Handler"]
+    H -->|Execute Error| J["onFailure Handler"]
+    
+    style B fill:#FFE4B5
+    style D fill:#B0E0E6
+    style E fill:#B0E0E6
+    style F fill:#B0E0E6
+    style G fill:#98FB98
+```
+
+### Error Handling & Retry Flow
+
+```mermaid
+graph TB
+    A["send() called"] --> B["Message serialized"]
+    B --> C["Added to buffer"]
+    C --> D["Batch flushed"]
+    D --> E{Broker<br/>responding?}
+    
+    E -->|No| F["Wait retry.backoff.ms"]
+    F --> G{Max retries<br/>exceeded?}
+    G -->|No| D
+    G -->|Yes| H["Error Callback"]
+    H --> I["Exception thrown<br/>to application"]
+    
+    E -->|Yes| J["Broker ACK received"]
+    J --> K["Success Callback"]
+    K --> L["RecordMetadata returned"]
+    
+    style A fill:#FFE4B5
+    style J fill:#90EE90
+    style H fill:#FFB6C6
+    style I fill:#FF6B6B
+    style K fill:#90EE90
+```
+
+### Compression Pipeline
+
+```mermaid
+graph LR
+    A["Original Message<br/>180 bytes"] -->|JsonSerializer| B["JSON Bytes<br/>180 bytes"]
+    B -->|No Compression| C1["Output<br/>180 bytes<br/>no header"]
+    
+    B -->|Snappy| C2["Output<br/>120 bytes<br/>+ snappy header"]
+    B -->|LZ4| C3["Output<br/>110 bytes<br/>+ lz4 header"]
+    B -->|GZIP| C4["Output<br/>90 bytes<br/>+ gzip header"]
+    B -->|ZSTD| C5["Output<br/>80 bytes<br/>+ zstd header"]
+    
+    C1 -->|Send| D["Kafka Broker"]
+    C2 -->|Send| D
+    C3 -->|Send| D
+    C4 -->|Send| D
+    C5 -->|Send| D
+    
+    style A fill:#FFE4B5
+    style B fill:#FFE4B5
+    style C1 fill:#FFB6C1
+    style C2 fill:#90EE90
+    style C3 fill:#90EE90
+    style C4 fill:#87CEEB
+    style C5 fill:#98FB98
+```
+
+### Configuration Impact Matrix
+
+```mermaid
+graph TB
+    subgraph Config ["Configuration Parameters"]
+        A["batch-size: 16KB"]
+        B["linger-ms: 10"]
+        C["acks: all"]
+        D["compression: snappy"]
+    end
+    
+    subgraph Impact ["Performance Impact"]
+        E["✓ Higher throughput<br/>✗ Higher latency"]
+        F["✓ Better batching<br/>✗ Delayed delivery"]
+        G["✓ High durability<br/>✗ Lower throughput"]
+        H["✓ Save bandwidth<br/>✗ CPU overhead"]
+    end
+    
+    A --> E
+    B --> F
+    C --> G
+    D --> H
+```
+
+### Topic & Partition Architecture
+
+```mermaid
+graph TB
+    A["Kafka Broker Cluster"]
+    
+    A --> B["Topic: library-events<br/>Replication Factor: 3"]
+    
+    B --> C["Partition 0<br/>Leader: Broker 1<br/>Replicas: 1,2,3"]
+    B --> D["Partition 1<br/>Leader: Broker 2<br/>Replicas: 2,3,1"]
+    B --> E["Partition 2<br/>Leader: Broker 3<br/>Replicas: 3,1,2"]
+    
+    C --> C1["Offset 0: Event-1"]
+    C --> C2["Offset 1: Event-2"]
+    C --> C3["Offset 2: Event-3"]
+    
+    F["Producer sends<br/>key=1"] -->|hash1%3=0| C
+    G["Producer sends<br/>key=2"] -->|hash2%3=1| D
+    H["Producer sends<br/>key=3"] -->|hash3%3=2| E
+    
+    style C fill:#90EE90
+    style D fill:#87CEEB
+    style E fill:#FFB6C1
+    style B fill:#FFE4B5
+```
+
+### Memory Buffer Management
+
+```mermaid
+graph TB
+    A["Total Buffer Memory: 32MB"]
+    
+    A --> B["Per-Partition Buffers"]
+    
+    B --> C["Topic A - Partition 0<br/>8MB"]
+    B --> D["Topic A - Partition 1<br/>8MB"]
+    B --> E["Topic B - Partition 0<br/>8MB"]
+    B --> F["Topic B - Partition 1<br/>8MB"]
+    
+    G["Slow Broker"] -->|Accumulates| C
+    H["Fast Send Rate"] -->|Fills Buffer"] C
+    
+    C -->|Buffer Full| I["Backpressure Applied<br/>send() blocks"]
+    I -->|Broker Catches Up| J["Buffer Drained<br/>send() resumes"]
+    
+    style C fill:#FFB6C6
+    style I fill:#FF6B6B
+    style J fill:#90EE90
+```
+
+### Message Journey Through System
+
+```mermaid
+journey
+    title LibraryEvent Message Journey
+    section Application
+        Event Created: 5: App
+        Event Serialized: 5: KafkaTemplate
+    section Producer
+        Added to Buffer: 4: KafkaTemplate
+        Batch Assembled: 5: KafkaTemplate
+    section Network
+        Sent to Broker: 4: Kafka Producer
+        Network Latency: 3: Network
+    section Broker
+        Received by Leader: 5: Broker
+        Replicated to Followers: 5: Broker
+    section Response
+        ACK Received: 5: Producer
+        Callback Executed: 5: KafkaTemplate
+        Message Delivered: 5: Application
+```
+
+### Decision Tree: When to Use What?
+
+```mermaid
+graph TD
+    A["Need to send message to Kafka?"]
+    
+    A -->|Yes| B{"Synchronous or<br/>Asynchronous?"}
+    
+    B -->|Synchronous| C["Use .send().get()"]
+    C --> C1["Best for: Critical operations<br/>where failure = immediate error"]
+    
+    B -->|Asynchronous| D["Use .send() + callback"]
+    D --> D1["Best for: High throughput<br/>where speed is critical"]
+    
+    A -->|No| E["Don't use KafkaTemplate"]
+    
+    style C1 fill:#90EE90
+    style D1 fill:#90EE90
+    style E fill:#FFB6C6
+```
 
 ## Summary
 
