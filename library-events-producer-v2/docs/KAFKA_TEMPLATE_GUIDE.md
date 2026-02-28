@@ -143,6 +143,7 @@ sequenceDiagram
     autonumber
     participant App as Application
     participant KT as KafkaTemplate
+    participant Metadata as MetadataFetcher
     participant Ser as Serializer
     participant Part as Partitioner
     participant Buffer as Message Buffer
@@ -154,7 +155,17 @@ sequenceDiagram
     App->>KT: send("library-events", 1, event)
     activate KT
     
-    Note over KT,Ser: 2. Serialization
+    Note over Metadata: 2. Fetch Cluster Metadata
+    KT->>Metadata: getMetadata(topic)
+    activate Metadata
+    Metadata->>Broker: Fetch metadata request
+    activate Broker
+    Broker-->>Metadata: Cluster info (brokers, partitions, replicas)
+    deactivate Broker
+    Metadata-->>KT: TopicMetadata
+    deactivate Metadata
+    
+    Note over KT,Ser: 3. Serialization
     KT->>Ser: serialize(key)
     activate Ser
     Ser-->>KT: byte[4]
@@ -164,13 +175,13 @@ sequenceDiagram
     Ser-->>KT: byte[180] (JSON)
     deactivate Ser
     
-    Note over Part: 3. Producer Metadata
-    KT->>Part: getPartition(topic, key)
+    Note over Part: 4. Partition Assignment
+    KT->>Part: getPartition(topic, key, metadata)
     activate Part
     Part-->>KT: partition=0
     deactivate Part
     
-    Note over Buffer: 4. Batching & Buffering
+    Note over Buffer: 5. Batching & Buffering
     KT->>Buffer: append(record, partition)
     activate Buffer
     Buffer-->>KT: RecordAccumulator
@@ -181,13 +192,13 @@ sequenceDiagram
     Note over Buffer: Messages accumulate in buffer
     
     alt Batch Ready (full or timeout)
-        Note over IO: 5. Network Send
+        Note over IO: 6. Network Send
         Buffer->>IO: flush batch
         activate IO
         IO->>Broker: NetworkSend(batch)
         activate Broker
         
-        Note over Broker,Log: 6. Acknowledgment
+        Note over Broker,Log: 7. Acknowledgment
         Broker->>Log: write to partition
         activate Log
         Log-->>Broker: offset assigned
@@ -195,7 +206,7 @@ sequenceDiagram
         Broker-->>IO: ACK(offset, metadata)
         deactivate Broker
         
-        Note over IO: 7. Callback Execution
+        Note over IO: 8. Callback Execution
         IO->>App: Success Callback with RecordMetadata
         deactivate IO
     else Error Occurred
