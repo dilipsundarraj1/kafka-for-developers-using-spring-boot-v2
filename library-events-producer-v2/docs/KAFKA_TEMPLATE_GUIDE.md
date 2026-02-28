@@ -1,5 +1,90 @@
 # Kafka Template Guide
 
+## Table of Contents
+
+- [Overview](#overview)
+- [What is KafkaTemplate?](#what-is-kafkatemplate)
+  - [Key Characteristics](#key-characteristics)
+- [How KafkaTemplate Works](#how-kafkatemplate-works)
+  - [Basic Flow](#basic-flow)
+  - [Message Sending Process](#message-sending-process)
+- [Common KafkaTemplate Methods](#common-kafkatemplate-methods)
+  - [1. Synchronous Send (Blocking)](#1-synchronous-send-blocking)
+  - [2. Asynchronous Send (Non-blocking)](#2-asynchronous-send-non-blocking)
+  - [3. Send with Callbacks](#3-send-with-callbacks)
+  - [4. Send with Topic, Key, and Value](#4-send-with-topic-key-and-value)
+- [Deep Dive: What Happens inside KafkaTemplate.send()](#deep-dive-what-happens-inside-kafkatemplate-send)
+  - [Step-by-Step Execution Flow](#step-by-step-execution-flow)
+  - [1. Serialization Deep Dive](#1-serialization-deep-dive)
+  - [2. Partitioning Deep Dive](#2-partitioning-deep-dive)
+  - [3. Batching & Buffering Deep Dive](#3-batching--buffering-deep-dive)
+  - [4. Compression](#4-compression)
+  - [5. Idempotence & Message Ordering](#5-idempotence--message-ordering)
+  - [6. Acknowledgment Policies (Acks)](#6-acknowledgment-policies-acks)
+  - [7. Retry Mechanism](#7-retry-mechanism)
+  - [8. RecordMetadata](#8-recordmetadata)
+  - [9. Back Pressure & Flow Control](#9-back-pressure--flow-control)
+- [Thread Model](#thread-model)
+  - [Threading Model Diagram](#threading-model-diagram)
+  - [Threading Model Flow Explanation](#threading-model-flow-explanation)
+    - [1. Application Threads](#1-application-threads)
+    - [2. KafkaTemplate (Singleton, Thread-Safe)](#2-kafkatemplate-singleton-thread-safe)
+    - [3. Main Thread (Serialization & Batching)](#3-main-thread-serialization--batching)
+    - [4. I/O Sender Thread (Network Operations)](#4-io-sender-thread-network-operations)
+    - [5. Callback Executor](#5-callback-executor)
+    - [Complete End-to-End Threading Flow](#complete-end-to-end-threading-flow)
+    - [Thread Safety Guarantees](#thread-safety-guarantees)
+    - [Performance Implications](#performance-implications)
+- [KafkaTemplate in Library Events Producer](#kafkatemplate-in-library-events-producer)
+  - [Configuration](#configuration)
+  - [Producer Implementation](#producer-implementation)
+  - [Key Components](#key-components)
+- [Message Key and Value](#message-key-and-value)
+  - [Key (Partition Determinant)](#key-partition-determinant)
+  - [Value (Actual Message)](#value-actual-message)
+  - [Example](#example)
+- [Serialization in KafkaTemplate](#serialization-in-kafkatemplate)
+  - [What Happens During Serialization](#what-happens-during-serialization)
+  - [Serialization Example](#serialization-example)
+- [Error Handling and Retries](#error-handling-and-retries)
+  - [Producer-Level Retries](#producer-level-retries)
+  - [Application-Level Exception Handling](#application-level-exception-handling)
+  - [Callback Error Handling](#callback-error-handling)
+- [Partitioning Strategy](#partitioning-strategy)
+  - [How KafkaTemplate Determines Partition](#how-kafkatemplate-determines-partition)
+  - [In Library Events Producer](#in-library-events-producer)
+- [Performance Considerations](#performance-considerations)
+  - [Batching](#batching)
+  - [Buffering](#buffering)
+- [Best Practices](#best-practices)
+  - [1. Use Dependency Injection](#1-use-dependency-injection)
+  - [2. Handle Exceptions Appropriately](#2-handle-exceptions-appropriately)
+  - [3. Use Type-Safe Generics](#3-use-type-safe-generics)
+  - [4. Log Important Events](#4-log-important-events)
+  - [5. Configure Appropriate Timeouts](#5-configure-appropriate-timeouts)
+- [KafkaTemplate vs Low-Level Kafka Producer](#kafkatemplate-vs-low-level-kafka-producer)
+- [Testing KafkaTemplate](#testing-kafkatemplate)
+  - [Using Embedded Kafka](#using-embedded-kafka)
+  - [Using MockKafkaTemplate](#using-mockkafkatemplate)
+- [Common Issues and Solutions](#common-issues-and-solutions)
+- [Visualizing KafkaTemplate with Mermaid Diagrams](#visualizing-kafkatemplate-with-mermaid-diagrams)
+  - [Message Flow Diagram](#message-flow-diagram)
+  - [Message Partitioning Flow](#message-partitioning-flow)
+  - [Batching Timeline Diagram](#batching-timeline-diagram)
+  - [Serialization Process Flow](#serialization-process-flow)
+  - [Producer State Machine](#producer-state-machine)
+  - [Concurrency Model](#concurrency-model)
+  - [Error Handling & Retry Flow](#error-handling--retry-flow)
+  - [Compression Pipeline](#compression-pipeline)
+  - [Configuration Impact Matrix](#configuration-impact-matrix)
+  - [Topic & Partition Architecture](#topic--partition-architecture)
+  - [Memory Buffer Management](#memory-buffer-management)
+  - [Message Journey Through System](#message-journey-through-system)
+  - [Decision Tree](#decision-tree)
+- [Summary](#summary)
+- [Further Reading](#further-reading)
+- [Related Files in This Project](#related-files-in-this-project)
+
 ## Overview
 
 `KafkaTemplate` is a Spring Framework class that provides a simple abstraction for sending messages to Apache Kafka topics. It's the primary tool used in Spring Kafka applications to publish messages from your application to Kafka brokers.
@@ -118,62 +203,6 @@ sequenceDiagram
         IO->>App: Error Callback with Exception
     end
 ```
-
-### Thread Model
-
-```mermaid
-graph TB
-    subgraph AppThreads ["Application Threads"]
-        T1["Request Thread 1"]
-        T2["Request Thread 2"]
-        T3["Request Thread 3"]
-    end
-    
-    subgraph KafkaTemplate ["KafkaTemplate (Singleton, Thread-Safe)"]
-        KT["KafkaTemplate<br/>send() method"]
-    end
-    
-    subgraph ProducerThreads ["Kafka Producer Threads"]
-        MT["Main Thread<br/>(Serialization & Batching)"]
-        IOT["I/O Sender Thread<br/>(Network Operations)"]
-    end
-    
-    subgraph CallbackThreads ["Callback Executor"]
-        CB1["Callback Thread 1"]
-        CB2["Callback Thread 2"]
-    end
-    
-    T1 -->|Concurrent Calls| KT
-    T2 -->|Concurrent Calls| KT
-    T3 -->|Concurrent Calls| KT
-    
-    KT -->|Delegates| MT
-    MT -->|Enqueues| IOT
-    
-    IOT -->|Success| CB1
-    IOT -->|Failure| CB2
-    
-    CB1 -.Notifies.-> T1
-    CB2 -.Notifies.-> T2
-    
-    style T1 fill:#FFE4B5
-    style T2 fill:#FFE4B5
-    style T3 fill:#FFE4B5
-    style KT fill:#87CEEB
-    style MT fill:#98FB98
-    style IOT fill:#90EE90
-    style CB1 fill:#DDA0DD
-    style CB2 fill:#FFB6C1
-```
-
-**Key Points:**
-1. **Message Creation**: Application creates a message object
-2. **Serialization**: KafkaTemplate serializes the message to bytes
-3. **Producer Metadata**: Kafka producer gathers broker metadata
-4. **Batching & Buffering**: Messages are batched for efficiency
-5. **Network Send**: Messages are sent to the Kafka broker
-6. **Acknowledgment**: Broker acknowledges receipt
-7. **Callback Execution**: Success or error callbacks are triggered
 
 ## Common KafkaTemplate Methods
 
@@ -867,6 +896,339 @@ Slow Broker Flow:
     
 Timeout:
   If broker too slow, send() throws exception after max.block.ms
+```
+
+## Thread Model
+
+Understanding how KafkaTemplate handles concurrency and threading is crucial for building high-performance applications.
+
+### Threading Model Diagram
+
+```mermaid
+graph TB
+    subgraph AppThreads ["Application Threads"]
+        T1["Request Thread 1"]
+        T2["Request Thread 2"]
+        T3["Request Thread 3"]
+    end
+    
+    subgraph KafkaTemplate ["KafkaTemplate (Singleton, Thread-Safe)"]
+        KT["KafkaTemplate<br/>send() method"]
+    end
+    
+    subgraph ProducerThreads ["Kafka Producer Threads"]
+        MT["Main Thread<br/>(Serialization & Batching)"]
+        IOT["I/O Sender Thread<br/>(Network Operations)"]
+    end
+    
+    subgraph CallbackThreads ["Callback Executor"]
+        CB1["Callback Thread 1"]
+        CB2["Callback Thread 2"]
+    end
+    
+    T1 -->|Concurrent Calls| KT
+    T2 -->|Concurrent Calls| KT
+    T3 -->|Concurrent Calls| KT
+    
+    KT -->|Delegates| MT
+    MT -->|Enqueues| IOT
+    
+    IOT -->|Success| CB1
+    IOT -->|Failure| CB2
+    
+    CB1 -.Notifies.-> T1
+    CB2 -.Notifies.-> T2
+    
+    style T1 fill:#FFE4B5
+    style T2 fill:#FFE4B5
+    style T3 fill:#FFE4B5
+    style KT fill:#87CEEB
+    style MT fill:#98FB98
+    style IOT fill:#90EE90
+    style CB1 fill:#DDA0DD
+    style CB2 fill:#FFB6C1
+```
+
+### Threading Model Flow Explanation
+
+#### 1. Application Threads (Request Threads 1-3)
+
+**What they do:**
+- Multiple application threads (e.g., HTTP request handlers, service methods) can call `kafkaTemplate.send()` concurrently
+- Each thread has its own execution context and doesn't block other threads
+- No synchronization overhead at the application level
+
+**Example:**
+```java
+// Thread 1 (Handling Request A)
+kafkaTemplate.send("library-events", 1, eventA);
+
+// Thread 2 (Handling Request B) - Runs concurrently
+kafkaTemplate.send("library-events", 2, eventB);
+
+// Thread 3 (Handling Request C) - Runs concurrently
+kafkaTemplate.send("library-events", 3, eventC);
+
+// All three threads return immediately!
+```
+
+#### 2. KafkaTemplate (Singleton, Thread-Safe)
+
+**What it does:**
+- Acts as the central gateway for all send requests
+- Implements synchronization internally to handle concurrent calls safely
+- Uses locks/atomics to manage shared state without exposing it to the caller
+- Returns a `ListenableFuture` immediately without blocking
+
+**Thread-Safety Mechanism:**
+```java
+// Internally, KafkaTemplate uses synchronization
+public ListenableFuture<SendResult<K, V>> send(String topic, K key, V value) {
+    // Internal locking ensures thread-safety
+    // Application doesn't see the locking overhead
+    synchronized(producer) {
+        // Prepare message
+        // Add to queue
+    }
+    // Return immediately
+    return future;
+}
+```
+
+**Key Characteristic:**
+- **Single Instance Shared Across Threads**: Only one KafkaTemplate bean exists (singleton pattern)
+- **No Need for Thread-Local Storage**: All threads use the same instance
+- **Efficient Resource Usage**: Avoids creating multiple producer instances
+
+#### 3. Main Thread (Serialization & Batching)
+
+**What it does:**
+- Runs in the background as part of the Kafka producer's thread pool
+- Receives serialization and batching tasks from KafkaTemplate
+- Performs CPU-intensive operations (serialization, compression)
+- Accumulates messages into batches
+
+**Operations Performed:**
+```
+Main Thread Responsibilities:
+
+Input: ProducerRecord objects
+    ↓
+Step 1: Serialize key
+    - Convert Integer key to bytes
+    - Example: 1 → [0, 0, 0, 1]
+    ↓
+Step 2: Serialize value
+    - Convert LibraryEvent to JSON
+    - Convert JSON string to UTF-8 bytes
+    ↓
+Step 3: Apply compression (if enabled)
+    - Compress serialized bytes
+    - Add compression codec header
+    ↓
+Step 4: Batch accumulation
+    - Check if batch is full (batch-size)
+    - Check if timeout reached (linger-ms)
+    - If condition met, enqueue for I/O thread
+    ↓
+Output: Batched, serialized, compressed messages
+```
+
+**Example Timeline:**
+```
+T=0ms:   Thread A sends message 1 → Main thread serializes
+T=1ms:   Thread B sends message 2 → Main thread serializes
+T=2ms:   Thread C sends message 3 → Main thread serializes
+T=10ms:  Batch size = 12KB (not full), but linger-ms timeout reached
+         → Main thread enqueues batch to I/O thread
+```
+
+#### 4. I/O Sender Thread (Network Operations)
+
+**What it does:**
+- Handles all network communication with Kafka brokers
+- Runs asynchronously to avoid blocking application threads
+- Manages TCP connections to brokers
+- Implements retry logic for failed sends
+
+**Network Operations:**
+```
+I/O Thread Responsibilities:
+
+Input: Batched messages from Main thread
+    ↓
+Step 1: Get broker metadata
+    - Which broker is the partition leader?
+    - Is connection pool available?
+    ↓
+Step 2: Establish/reuse TCP connection
+    - Connect to broker if not already connected
+    - Maintain connection pool
+    ↓
+Step 3: Send network request
+    - Send batched messages over TCP
+    - Apply request timeout (request.timeout.ms)
+    ↓
+Step 4: Wait for broker response
+    - Broker processes and writes to log
+    - Broker replicates to followers (if configured)
+    - Broker sends ACK with metadata
+    ↓
+Step 5: Handle response
+    - Extract offset, partition, timestamp
+    - Create RecordMetadata
+    - Determine success or failure
+    ↓
+Output: Callback to be executed
+```
+
+**Example Network Flow:**
+```
+I/O Thread Timeline:
+
+T=0ms:   Batch of 3 messages enqueued
+T=5ms:   Connected to Broker 1 (Leader for partition 0)
+T=10ms:  Sent 3 messages over network (TCP)
+T=15ms:  Broker 1 received messages
+T=20ms:  Broker 1 wrote to log
+T=25ms:  Broker 1 replicated to Broker 2
+T=30ms:  Broker 1 replicated to Broker 3
+T=35ms:  All replicas acknowledged
+T=40ms:  Broker 1 sends ACK to producer
+         - offset: 1234
+         - partition: 0
+         - timestamp: 1645980000000
+T=45ms:  ACK received, callback executor notified
+```
+
+#### 5. Callback Executor (Success/Failure Threads)
+
+**What it does:**
+- Executes success and failure callbacks registered via `addCallback()`
+- Runs in separate thread pools to avoid blocking I/O threads
+- Notifies application code of send results
+- Allows custom error handling and retries
+
+**Callback Execution Flow:**
+```
+Success Callback Path:
+    I/O Thread receives ACK
+        ↓
+    Creates RecordMetadata
+        ↓
+    Enqueues success callback to executor
+        ↓
+    Callback Thread 1 executes onSuccess()
+        ↓
+    User code handles success
+        └─→ Log, update metrics, store offset, etc.
+
+Failure Callback Path:
+    I/O Thread receives error from broker
+        ↓
+    Extracts error details (timeout, broker error, etc.)
+        ↓
+    Enqueues failure callback to executor
+        ↓
+    Callback Thread 2 executes onFailure()
+        ↓
+    User code handles failure
+        └─→ Log error, alert, retry, circuit-break, etc.
+```
+
+**Example Callback Execution:**
+```java
+kafkaTemplate.send("library-events", 1, event)
+    .addCallback(
+        result -> {
+            // This runs in Callback Thread 1 when message succeeds
+            log.info("Message published at offset: {}", 
+                result.getRecordMetadata().offset());
+        },
+        ex -> {
+            // This runs in Callback Thread 2 when message fails
+            log.error("Failed to publish message", ex);
+            // Could implement retry logic here
+        }
+    );
+
+// Application continues immediately
+// Callback executes later in background
+```
+
+### Complete End-to-End Threading Flow
+
+```
+Time    Application Thread    Main Thread           I/O Thread        Callback Thread
+────────────────────────────────────────────────────────────────────────────────────
+T=0ms   │ send() called      │                      │                 │
+        ├─ Returns immediately with ListenableFuture
+        │                    │
+T=1ms   │ Continue processing (non-blocking!)
+        │                    │ Serialize message 1  │                 │
+        │                    ├─ Add to batch        │                 │
+        │                    │                      │                 │
+T=5ms   │ send() called      │ Serialize message 2  │                 │
+        ├─ Returns immediately with ListenableFuture
+        │ Continue processing (non-blocking!)
+        │                    ├─ Add to batch        │                 │
+        │                    │ Check batch size     │                 │
+        │                    │                      │                 │
+T=10ms  │ send() called      │ Batch not full       │                 │
+        ├─ Returns immediately with ListenableFuture
+        │ Continue processing (non-blocking!)
+        │                    ├─ Timeout reached     │                 │
+        │                    ├─ Flush batch ────────┤                 │
+        │                    │                      ├─ Send to broker │
+        │                    │                      │                 │
+T=50ms  │                    │                      ├─ Receive ACK    │
+        │                    │                      ├─ Enqueue ──────────┤
+        │                    │                      │                 ├─ onSuccess()
+        │                    │                      │                 │ called
+        │                    │                      │                 │
+```
+
+**Key Observations:**
+
+1. **Non-Blocking**: Application thread never waits for broker response
+2. **Concurrent**: Multiple application threads can send simultaneously
+3. **Asynchronous**: All heavy lifting happens in background threads
+4. **Efficient**: Batching reduces network overhead
+5. **Responsive**: User code continues executing while Kafka operations complete
+
+### Thread Safety Guarantees
+
+| Guarantee | How It's Ensured |
+|-----------|------------------|
+| **Thread-Safe send()** | Internal synchronization in KafkaTemplate |
+| **Concurrent access** | Lock-free data structures for message batching |
+| **No race conditions** | Atomic operations on offsets and metadata |
+| **Safe callbacks** | Callback executor uses thread pools |
+| **Memory visibility** | Volatile fields and happens-before relationships |
+
+### Performance Implications
+
+```yaml
+# Threading Configuration (in application.yml)
+spring:
+  kafka:
+    producer:
+      # Controls batching (affects Main thread workload)
+      batch-size: 16384           # 16 KB
+      linger-ms: 10               # 10 ms
+      
+      # Controls I/O thread behavior
+      compression-type: snappy    # Reduces network I/O
+      
+      # Total memory for buffering across all threads
+      buffer-memory: 33554432     # 32 MB
+      
+      properties:
+        # I/O thread timeout
+        request.timeout.ms: 30000
+        
+        # Affects retry behavior in I/O thread
+        retry.backoff.ms: 100
 ```
 
 ## KafkaTemplate in Library Events Producer
