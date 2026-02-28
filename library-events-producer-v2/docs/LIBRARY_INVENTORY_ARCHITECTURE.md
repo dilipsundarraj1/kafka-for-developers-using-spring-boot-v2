@@ -4,9 +4,9 @@
 
 ```mermaid
 graph LR
-    A["👤 Librarian<br/>(Client)"] -->|REST Request| B["MicroService 1<br/>Library Event Producer"]
+    A["👤 Librarian<br/>(Client)"] -->|REST Request| Producer
     
-    subgraph Producer ["MicroService 1"]
+    subgraph Producer ["MicroService 1<br/>Library Event Producer"]
         B1["API<br/>(REST Endpoint)"]
         B2["Kafka Producer"]
         B1 -->|Publish Event| B2
@@ -14,9 +14,9 @@ graph LR
     
     B2 -->|Publish Message| C["📊 Kafka Topic<br/>library-events"]
     
-    C -->|Consume Message| D["MicroService 2<br/>Library Event Consumer"]
+    C -->|Consume Message| Consumer
     
-    subgraph Consumer ["MicroService 2"]
+    subgraph Consumer ["MicroService 2<br/>Library Event Consumer"]
         D1["Kafka Consumer"]
         D2["PostgreSQL<br/>(Database)"]
         D1 -->|Store Data| D2
