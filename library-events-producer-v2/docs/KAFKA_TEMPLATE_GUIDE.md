@@ -272,6 +272,24 @@ future.addCallback(
 );
 ```
 
+**Pros:**
+- Non-blocking (returns immediately)
+- Highest throughput and performance
+- Best for high-volume scenarios
+- Flexible success and failure handling
+- Access to detailed RecordMetadata in callbacks
+- Can implement custom retry logic in failure callback
+- Ideal for production systems
+
+**Cons:**
+- More complex code (requires callback implementation)
+- Requires careful error handling in failure callback
+- Debugging can be harder (asynchronous flow)
+- Callback execution timing may be unpredictable
+- Thread safety concerns if callbacks modify shared state
+- Need to ensure callbacks don't block or do heavy operations
+- Error handling spread across onSuccess/onFailure methods
+
 ### 4. Send with Topic, Key, and Value
 ```java
 // Topic: "library-events"
