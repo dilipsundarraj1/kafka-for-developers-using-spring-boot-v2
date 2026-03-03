@@ -7,12 +7,12 @@
   - [Key Characteristics](#key-characteristics)
 - [How KafkaTemplate Works](#how-kafkatemplate-works)
   - [Basic Flow](#basic-flow)
-  - [Message Sending Process](#message-sending-process)
 - [Common KafkaTemplate Methods](#common-kafkatemplate-methods)
   - [1. Asynchronous Send (Non-blocking)](#1-asynchronous-send-non-blocking)
   - [2. Synchronous Send (Blocking)](#2-synchronous-send-blocking)
   - [3. Send with Callbacks](#3-send-with-callbacks)
   - [4. Send with Topic, Key, and Value](#4-send-with-topic-key-and-value)
+- [Message Sending Process](#message-sending-process)
 - [Deep Dive: What Happens inside KafkaTemplate.send()](#deep-dive-what-happens-inside-kafkatemplate-send)
   - [Step-by-Step Execution Flow](#step-by-step-execution-flow)
   - [1. Serialization Deep Dive](#1-serialization-deep-dive)
@@ -136,84 +136,6 @@ graph TD
     style K fill:#FFE4B5
 ```
 
-### Message Sending Process
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant App as Application
-    participant KT as KafkaTemplate
-    participant Metadata as MetadataFetcher
-    participant Ser as Serializer
-    participant Part as Partitioner
-    participant Buffer as Message Buffer
-    participant IO as I/O Thread
-    participant Broker as Kafka Broker
-    participant Log as Partition Log
-    
-    Note over App: 1. Message Creation
-    App->>KT: send("library-events", 1, event)
-    activate KT
-    
-    Note over Metadata: 2. Fetch Cluster Metadata
-    KT->>Metadata: getMetadata(topic)
-    activate Metadata
-    Metadata->>Broker: Fetch metadata request
-    activate Broker
-    Broker-->>Metadata: Cluster info (brokers, partitions, replicas)
-    deactivate Broker
-    Metadata-->>KT: TopicMetadata
-    deactivate Metadata
-    
-    Note over KT,Ser: 3. Serialization
-    KT->>Ser: serialize(key)
-    activate Ser
-    Ser-->>KT: byte[4]
-    deactivate Ser
-    KT->>Ser: serialize(value)
-    activate Ser
-    Ser-->>KT: byte[180] (JSON)
-    deactivate Ser
-    
-    Note over Part: 4. Partition Assignment
-    KT->>Part: getPartition(topic, key, metadata)
-    activate Part
-    Part-->>KT: partition=0
-    deactivate Part
-    
-    Note over Buffer: 5. Batching & Buffering
-    KT->>Buffer: append(record, partition)
-    activate Buffer
-    Buffer-->>KT: RecordAccumulator
-    deactivate Buffer
-    KT-->>App: ListenableFuture<SendResult>
-    deactivate KT
-    
-    Note over Buffer: Messages accumulate in buffer
-    
-    alt Batch Ready (full or timeout)
-        Note over IO: 6. Network Send
-        Buffer->>IO: flush batch
-        activate IO
-        IO->>Broker: NetworkSend(batch)
-        activate Broker
-        
-        Note over Broker,Log: 7. Acknowledgment
-        Broker->>Log: write to partition
-        activate Log
-        Log-->>Broker: offset assigned
-        deactivate Log
-        Broker-->>IO: ACK(offset, metadata)
-        deactivate Broker
-        
-        Note over IO: 8. Callback Execution
-        IO->>App: Success Callback with RecordMetadata
-        deactivate IO
-    else Error Occurred
-        Note over IO: Retry or Fail
-        IO->>App: Error Callback with Exception
-    end
-```
 
 ## Common KafkaTemplate Methods
 
@@ -298,6 +220,86 @@ future.addCallback(
 // Value: LibraryEvent object
 kafkaTemplate.send(topic, 1, libraryEvent);
 ```
+
+## Message Sending Process
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application
+    participant KT as KafkaTemplate
+    participant Metadata as MetadataFetcher
+    participant Ser as Serializer
+    participant Part as Partitioner
+    participant Buffer as Message Buffer
+    participant IO as I/O Thread
+    participant Broker as Kafka Broker
+    participant Log as Partition Log
+    
+    Note over App: 1. Message Creation
+    App->>KT: send("library-events", 1, event)
+    activate KT
+    
+    Note over Metadata: 2. Fetch Cluster Metadata
+    KT->>Metadata: getMetadata(topic)
+    activate Metadata
+    Metadata->>Broker: Fetch metadata request
+    activate Broker
+    Broker-->>Metadata: Cluster info (brokers, partitions, replicas)
+    deactivate Broker
+    Metadata-->>KT: TopicMetadata
+    deactivate Metadata
+    
+    Note over KT,Ser: 3. Serialization
+    KT->>Ser: serialize(key)
+    activate Ser
+    Ser-->>KT: byte[4]
+    deactivate Ser
+    KT->>Ser: serialize(value)
+    activate Ser
+    Ser-->>KT: byte[180] (JSON)
+    deactivate Ser
+    
+    Note over Part: 4. Partition Assignment
+    KT->>Part: getPartition(topic, key, metadata)
+    activate Part
+    Part-->>KT: partition=0
+    deactivate Part
+    
+    Note over Buffer: 5. Batching & Buffering
+    KT->>Buffer: append(record, partition)
+    activate Buffer
+    Buffer-->>KT: RecordAccumulator
+    deactivate Buffer
+    KT-->>App: ListenableFuture<SendResult>
+    deactivate KT
+    
+    Note over Buffer: Messages accumulate in buffer
+    
+    alt Batch Ready (full or timeout)
+        Note over IO: 6. Network Send
+        Buffer->>IO: flush batch
+        activate IO
+        IO->>Broker: NetworkSend(batch)
+        activate Broker
+        
+        Note over Broker,Log: 7. Acknowledgment
+        Broker->>Log: write to partition
+        activate Log
+        Log-->>Broker: offset assigned
+        deactivate Log
+        Broker-->>IO: ACK(offset, metadata)
+        deactivate Broker
+        
+        Note over IO: 8. Callback Execution
+        IO->>App: Success Callback with RecordMetadata
+        deactivate IO
+    else Error Occurred
+        Note over IO: Retry or Fail
+        IO->>App: Error Callback with Exception
+    end
+```
+
 
 ## Deep Dive: What Happens inside KafkaTemplate.send()
 
