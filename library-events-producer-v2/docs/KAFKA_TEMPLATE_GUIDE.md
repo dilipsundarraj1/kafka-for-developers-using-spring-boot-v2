@@ -9,8 +9,8 @@
   - [Basic Flow](#basic-flow)
   - [Message Sending Process](#message-sending-process)
 - [Common KafkaTemplate Methods](#common-kafkatemplate-methods)
-  - [1. Synchronous Send (Blocking)](#1-synchronous-send-blocking)
-  - [2. Asynchronous Send (Non-blocking)](#2-asynchronous-send-non-blocking)
+  - [1. Asynchronous Send (Non-blocking)](#1-asynchronous-send-non-blocking)
+  - [2. Synchronous Send (Blocking)](#2-synchronous-send-blocking)
   - [3. Send with Callbacks](#3-send-with-callbacks)
   - [4. Send with Topic, Key, and Value](#4-send-with-topic-key-and-value)
 - [Deep Dive: What Happens inside KafkaTemplate.send()](#deep-dive-what-happens-inside-kafkatemplate-send)
@@ -217,7 +217,23 @@ sequenceDiagram
 
 ## Common KafkaTemplate Methods
 
-### 1. Synchronous Send (Blocking)
+### 1. Asynchronous Send (Non-blocking)
+```java
+// Returns a ListenableFuture immediately
+ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
+    kafkaTemplate.send(topic, event);
+```
+
+**Pros:**
+- Non-blocking
+- Higher throughput
+- Better performance
+
+**Cons:**
+- Must handle success/error callbacks
+- More complex error handling
+
+### 2. Synchronous Send (Blocking)
 ```java
 // Returns a ListenableFuture that blocks until message is sent
 SendResult<Integer, LibraryEvent> result = 
@@ -234,21 +250,6 @@ SendResult<Integer, LibraryEvent> result =
 - Lower throughput
 - Can cause performance issues under high load
 
-### 2. Asynchronous Send (Non-blocking)
-```java
-// Returns a ListenableFuture immediately
-ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
-    kafkaTemplate.send(topic, event);
-```
-
-**Pros:**
-- Non-blocking
-- Higher throughput
-- Better performance
-
-**Cons:**
-- Must handle success/error callbacks
-- More complex error handling
 
 ### 3. Send with Callbacks
 ```java
