@@ -9,7 +9,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -45,5 +47,29 @@ public class LibraryEventsController {
         logger.info("Library event created successfully: {}", libraryEvent);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(libraryEvent);
+    }
+
+    /**
+     * PUT /v1/library-events/{libraryEventId} - Update an existing library event
+     *
+     * @param libraryEventId the event id from path, used as the Kafka key
+     * @param libraryEvent the incoming library event payload
+     * @return 202 Accepted with the updated event payload
+     */
+    @PutMapping("/{libraryEventId}")
+    public ResponseEntity<LibraryEvent> putLibraryEvent(@PathVariable Integer libraryEventId,
+                                                        @RequestBody @Valid LibraryEvent libraryEvent) {
+        LibraryEvent libraryEventForUpdate = new LibraryEvent(
+                libraryEventId,
+                libraryEvent.libraryEventType(),
+                libraryEvent.book()
+        );
+
+        logger.info("Received PUT request to update library event id {}: {}", libraryEventId, libraryEventForUpdate);
+
+        libraryEventProducer.sendLibraryEvent(libraryEventForUpdate);
+
+        logger.info("Library event updated successfully: {}", libraryEventForUpdate);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(libraryEventForUpdate);
     }
 }
