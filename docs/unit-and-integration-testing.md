@@ -1,5 +1,33 @@
 # Introduction to Unit and Integration Testing
 
+## Table of Contents
+
+1. [Why Testing Matters](#why-testing-matters)
+   - [The Real Cost of Not Testing](#the-real-cost-of-not-testing)
+   - [The Cost of Bugs Grows Over Time](#the-cost-of-bugs-grows-over-time)
+   - [Testing in a Kafka-Based System](#testing-in-a-kafka-based-system)
+   - [What Teams With Good Test Coverage Experience](#what-teams-with-good-test-coverage-experience)
+2. [Unit Testing](#unit-testing)
+   - [What Is a Unit Test?](#what-is-a-unit-test)
+   - [Key Characteristics](#key-characteristics)
+   - [Example](#example-spring-boot--junit-5)
+   - [What to Mock](#what-to-mock)
+   - [Visual: How Unit Testing Works](#visual-how-unit-testing-works)
+3. [Integration Testing](#integration-testing)
+   - [What Is an Integration Test?](#what-is-an-integration-test)
+   - [Key Characteristics](#key-characteristics-1)
+   - [Example](#example-spring-boot--embedded-kafka)
+   - [Visual: How Integration Testing Works](#visual-how-integration-testing-works)
+4. [Unit vs Integration Testing — Side by Side](#unit-vs-integration-testing--side-by-side)
+   - [Visual: What Gets Mocked vs What Is Real](#visual-what-gets-mocked-vs-what-is-real)
+5. [Request Flow in a Kafka Application](#request-flow-in-a-kafka-application)
+6. [The Testing Pyramid](#the-testing-pyramid)
+   - [Test Execution Speed Comparison](#test-execution-speed-comparison)
+7. [Best Practices](#best-practices)
+8. [Summary](#summary)
+
+---
+
 ## Why Testing Matters
 
 Testing is not optional — it is a core engineering discipline that separates professional software from fragile prototypes.
