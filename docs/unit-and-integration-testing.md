@@ -4,6 +4,67 @@
 
 Testing is not optional — it is a core engineering discipline that separates professional software from fragile prototypes.
 
+### The Real Cost of Not Testing
+
+Consider a real-world scenario: your team is building a **library events service** that publishes messages to Kafka whenever a book is added or updated. The system works fine in development. You ship it.
+
+Three weeks later, a colleague refactors the `LibraryEventService` to add a new field to the Kafka message. They don't realize that the consumer downstream depends on the exact message structure. There are no tests. The change looks clean. It gets merged.
+
+In production, the consumer silently starts failing to deserialize messages. Books go unindexed. No alerts fire. Users report stale search results days later.
+
+**The bug cost:**
+- 2 days to diagnose (no test pointed at the contract)
+- 1 day to hotfix and redeploy
+- Data inconsistency requiring a manual reconciliation job
+- Lost user trust
+
+A single integration test covering the producer-consumer message contract would have caught this in seconds during the CI pipeline.
+
+---
+
+### The Cost of Bugs Grows Over Time
+
+```
+Cost to fix a bug:
+
+  Requirements  │█  $1
+  Development   │███  $10
+  Testing (QA)  │█████████  $100
+  Production    │████████████████████████  $1,000+
+
+                └──────────────────────────────▶ time
+```
+
+The later a bug is found, the more it costs — in time, money, and reputation.
+
+---
+
+### Testing in a Kafka-Based System
+
+Kafka introduces asynchronous, distributed communication. This makes bugs especially hard to trace without tests:
+
+- A producer sends a malformed message → the consumer crashes silently
+- A topic name is misconfigured → messages are published to the wrong topic
+- A serializer changes → consumers cannot deserialize old messages
+
+Tests give you a safety net at every layer:
+
+| Layer | Risk Without Tests | Test Type |
+|---|---|---|
+| Producer logic | Wrong message structure published | Unit Test |
+| REST → Kafka flow | Message never reaches broker | Integration Test |
+| Consumer logic | Records processed incorrectly | Unit Test |
+| Consumer → DB flow | Data silently not persisted | Integration Test |
+
+---
+
+### What Teams With Good Test Coverage Experience
+
+- **Faster onboarding** — new developers run the tests, understand the system behavior, and make changes confidently within days
+- **Fearless refactoring** — upgrade Spring Boot, swap a library, restructure a class — tests tell you immediately if something broke
+- **Shorter review cycles** — PRs with passing tests require less manual inspection
+- **Reliable CI/CD** — automated pipelines catch regressions before they reach production
+
 **Without tests, you:**
 - Cannot confidently refactor or upgrade dependencies
 - Discover bugs in production, where the cost is highest
