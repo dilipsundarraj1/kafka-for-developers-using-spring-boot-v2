@@ -19,10 +19,17 @@ repositories {
 }
 
 dependencies {
+	// kafka
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+	// web
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+
+	//docker
 	developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
+
+	//test
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-kafka-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
