@@ -109,6 +109,26 @@ Tests give you a safety net at every layer:
 
 ## Unit Testing
 
+### Visual: How Unit Testing Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        UNIT TEST                            │
+│                                                             │
+│   ┌──────────┐      ┌──────────────────┐                   │
+│   │  Input   │─────▶│   Your Method /  │─────▶  Assert     │
+│   │  (given) │      │   Class (SUT)    │        Result      │
+│   └──────────┘      └──────────────────┘                   │
+│                              │                              │
+│                    ┌─────────▼─────────┐                   │
+│                    │   Dependencies    │                    │
+│                    │  🚫 Kafka         │  ← All MOCKED      │
+│                    │  🚫 Database      │                    │
+│                    │  🚫 REST API      │                    │
+│                    └───────────────────┘                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### What Is a Unit Test?
 
 A **unit test** validates a single, isolated piece of logic — typically a method or class — without involving external dependencies like databases, message brokers, or HTTP clients.
@@ -156,29 +176,29 @@ class LibraryEventServiceTest {
 - System clocks, random generators
 - File system or network I/O
 
-### Visual: How Unit Testing Works
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        UNIT TEST                            │
-│                                                             │
-│   ┌──────────┐      ┌──────────────────┐                   │
-│   │  Input   │─────▶│   Your Method /  │─────▶  Assert     │
-│   │  (given) │      │   Class (SUT)    │        Result      │
-│   └──────────┘      └──────────────────┘                   │
-│                              │                              │
-│                    ┌─────────▼─────────┐                   │
-│                    │   Dependencies    │                    │
-│                    │  🚫 Kafka         │  ← All MOCKED      │
-│                    │  🚫 Database      │                    │
-│                    │  🚫 REST API      │                    │
-│                    └───────────────────┘                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## Integration Testing
+
+### Visual: How Integration Testing Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    INTEGRATION TEST                          │
+│                                                             │
+│  ┌──────────┐   ┌───────────┐   ┌──────────┐              │
+│  │  HTTP    │──▶│Controller │──▶│ Service  │              │
+│  │  Request │   └───────────┘   └────┬─────┘              │
+│  └──────────┘                        │                     │
+│                               ┌──────▼──────┐             │
+│                               │  Embedded   │             │
+│                               │   Kafka     │  ← REAL      │
+│                               │  (in-memory)│             │
+│                               └─────────────┘             │
+│                                                             │
+│   Full Spring context loaded ✅   Real I/O ✅              │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ### What Is an Integration Test?
 
@@ -223,38 +243,9 @@ class LibraryEventsControllerIntegrationTest {
 }
 ```
 
-### Visual: How Integration Testing Works
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    INTEGRATION TEST                          │
-│                                                             │
-│  ┌──────────┐   ┌───────────┐   ┌──────────┐              │
-│  │  HTTP    │──▶│Controller │──▶│ Service  │              │
-│  │  Request │   └───────────┘   └────┬─────┘              │
-│  └──────────┘                        │                     │
-│                               ┌──────▼──────┐             │
-│                               │  Embedded   │             │
-│                               │   Kafka     │  ← REAL      │
-│                               │  (in-memory)│             │
-│                               └─────────────┘             │
-│                                                             │
-│   Full Spring context loaded ✅   Real I/O ✅              │
-└─────────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## Unit vs Integration Testing — Side by Side
-
-| Aspect | Unit Test | Integration Test |
-|---|---|---|
-| **Speed** | Very fast (ms) | Slower (seconds) |
-| **Dependencies** | Mocked | Real or embedded |
-| **Scope** | Single class/method | Multiple components |
-| **Failure diagnosis** | Easy — narrow scope | Harder — more moving parts |
-| **Confidence level** | Logic correctness | System correctness |
-| **Quantity** | Many | Fewer |
 
 ### Visual: What Gets Mocked vs What Is Real
 
@@ -272,6 +263,15 @@ class LibraryEventsControllerIntegrationTest {
   HTTP Client │  MOCKED   │           │ TEST REST │
               └───────────┘           └───────────┘
 ```
+
+| Aspect | Unit Test | Integration Test |
+|---|---|---|
+| **Speed** | Very fast (ms) | Slower (seconds) |
+| **Dependencies** | Mocked | Real or embedded |
+| **Scope** | Single class/method | Multiple components |
+| **Failure diagnosis** | Easy — narrow scope | Harder — more moving parts |
+| **Confidence level** | Logic correctness | System correctness |
+| **Quantity** | Many | Fewer |
 
 ---
 
