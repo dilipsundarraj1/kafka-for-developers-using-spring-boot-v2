@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
@@ -275,6 +276,193 @@ class LibraryEventsControllerIntegrationTest {
                 .content(requestBody))
                 .andExpect(status().isUnsupportedMediaType());
     }
+
+    // ==================== PUT /v1/library-events/{libraryEventId} Tests ====================
+
+    @Test
+    @DisplayName("Integration: PUT should return 202 Accepted with valid UPDATE event and publish to Kafka")
+    void testPutLibraryEventWithValidUpdateEvent_ShouldReturn202() throws Exception {
+        // Given
+        LibraryEvent updateEvent = new LibraryEvent(1, LibraryEventType.UPDATE, validBook);
+        String requestBody = objectMapper.writeValueAsString(updateEvent);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isAccepted())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.libraryEventId").value(1))
+                .andExpect(jsonPath("$.libraryEventType").value("UPDATE"))
+                .andExpect(jsonPath("$.book.bookId").value(1))
+                .andExpect(jsonPath("$.book.bookName").value("Kafka in Action"))
+                .andExpect(jsonPath("$.book.bookAuthor").value("John Doe"));
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should use path variable libraryEventId, overriding body value")
+    void testPutLibraryEvent_PathVariableOverridesBodyId() throws Exception {
+        // Given - body has libraryEventId=999, but path has 42
+        LibraryEvent updateEvent = new LibraryEvent(999, LibraryEventType.UPDATE, validBook);
+        String requestBody = objectMapper.writeValueAsString(updateEvent);
+
+        // When & Then - response should have libraryEventId=42 from path
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 42)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.libraryEventId").value(42));
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should accept ADD event type (no type restriction on PUT)")
+    void testPutLibraryEvent_WithAddEventType_ShouldSucceed() throws Exception {
+        // Given - PUT endpoint uses @Valid (default group), not PostValidation group
+        LibraryEvent addEvent = new LibraryEvent(null, LibraryEventType.ADD, validBook);
+        String requestBody = objectMapper.writeValueAsString(addEvent);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.libraryEventId").value(1))
+                .andExpect(jsonPath("$.libraryEventType").value("ADD"));
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should set libraryEventId from path even when body has null id")
+    void testPutLibraryEvent_WithNullBodyId_ShouldUsePathId() throws Exception {
+        // Given - use ADD type because UPDATE with null libraryEventId fails bean validation
+        // (isLibraryEventIdValidForUpdate) before the controller can set the path variable
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, validBook);
+        String requestBody = objectMapper.writeValueAsString(event);
+
+        // When & Then - path variable 5 should be used as the libraryEventId in the response
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 5)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.libraryEventId").value(5))
+                .andExpect(jsonPath("$.libraryEventType").value("ADD"));
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should reject event with null libraryEventType")
+    void testPutLibraryEvent_WithNullEventType_ShouldReturn400() throws Exception {
+        // Given
+        LibraryEvent nullTypeEvent = new LibraryEvent(1, null, validBook);
+        String requestBody = objectMapper.writeValueAsString(nullTypeEvent);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should reject event with null book")
+    void testPutLibraryEvent_WithNullBook_ShouldReturn400() throws Exception {
+        // Given
+        LibraryEvent nullBookEvent = new LibraryEvent(1, LibraryEventType.UPDATE, null);
+        String requestBody = objectMapper.writeValueAsString(nullBookEvent);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should reject event with null book ID")
+    void testPutLibraryEvent_WithNullBookId_ShouldReturn400() throws Exception {
+        // Given
+        Book invalidBook = new Book(null, "Kafka in Action", "John Doe");
+        LibraryEvent event = new LibraryEvent(1, LibraryEventType.UPDATE, invalidBook);
+        String requestBody = objectMapper.writeValueAsString(event);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should reject event with blank book name")
+    void testPutLibraryEvent_WithBlankBookName_ShouldReturn400() throws Exception {
+        // Given
+        Book invalidBook = new Book(1, "", "John Doe");
+        LibraryEvent event = new LibraryEvent(1, LibraryEventType.UPDATE, invalidBook);
+        String requestBody = objectMapper.writeValueAsString(event);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should reject event with blank book author")
+    void testPutLibraryEvent_WithBlankBookAuthor_ShouldReturn400() throws Exception {
+        // Given
+        Book invalidBook = new Book(1, "Kafka in Action", "");
+        LibraryEvent event = new LibraryEvent(1, LibraryEventType.UPDATE, invalidBook);
+        String requestBody = objectMapper.writeValueAsString(event);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Integration: PUT with invalid JSON should return 400 Bad Request")
+    void testPutLibraryEvent_WithInvalidJson_ShouldReturn400() throws Exception {
+        // Given
+        String invalidJson = "{invalid json}";
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalidJson))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Integration: PUT without Content-Type header should return 415 Unsupported Media Type")
+    void testPutLibraryEvent_WithoutContentType_ShouldReturn415() throws Exception {
+        // Given
+        LibraryEvent updateEvent = new LibraryEvent(1, LibraryEventType.UPDATE, validBook);
+        String requestBody = objectMapper.writeValueAsString(updateEvent);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 1)
+                        .content(requestBody))
+                .andExpect(status().isUnsupportedMediaType());
+    }
+
+    @Test
+    @DisplayName("Integration: PUT should return the complete updated event with all book fields")
+    void testPutLibraryEvent_ResponseContainsAllFields() throws Exception {
+        // Given
+        Book updatedBook = new Book(99, "Updated Book Title", "Updated Author");
+        LibraryEvent updateEvent = new LibraryEvent(10, LibraryEventType.UPDATE, updatedBook);
+        String requestBody = objectMapper.writeValueAsString(updateEvent);
+
+        // When & Then
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 10)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.libraryEventId").value(10))
+                .andExpect(jsonPath("$.libraryEventType").value("UPDATE"))
+                .andExpect(jsonPath("$.book.bookId").value(99))
+                .andExpect(jsonPath("$.book.bookName").value("Updated Book Title"))
+                .andExpect(jsonPath("$.book.bookAuthor").value("Updated Author"));
+    }
 }
-
-

@@ -1,0 +1,318 @@
+# Product Requirements Document (PRD)
+## Library Events Consumer
+
+## 1. Product Overview
+Build a Spring Boot consumer application that listens to Kafka topic `library-events` and persists library event data to a relational database.
+
+## 2. Problem Statement
+Incoming library events must be reliably processed:
+- `ADD` events create new `LibraryEvent` and related `Book` records.
+- `UPDATE` events modify existing `LibraryEvent` and `Book` records.
+
+## 3. Goals
+- Consume events from Kafka topic `library-events`.
+- Persist valid `ADD` events.
+- Apply valid `UPDATE` events to existing records.
+- Handle malformed/invalid/unprocessable messages safely.
+
+## 4. Non-Goals
+- Producing messages back to Kafka (except optional future DLT integration).
+- Building external REST APIs for this service.
+- Complex event version migration in this phase.
+
+## 5. Functional Requirements
+1. Kafka Consumption
+   - Subscribe to topic `library-events`.
+   - Consume JSON payload messages.
+
+2. Event Parsing and Validation
+   - Parse payload into `LibraryEvent` with nested `Book`.
+   - Validate required fields:
+     - `eventType` required (`ADD` or `UPDATE`)
+     - `book` required
+     - For `UPDATE`, `libraryEventId` required
+
+3. ADD Logic
+   - If `eventType=ADD`, insert a new `LibraryEvent`.
+   - Insert associated `Book` details in the same transaction.
+
+4. UPDATE Logic
+   - If `eventType=UPDATE`, find existing `LibraryEvent` by ID.
+   - Update event/book fields if record exists.
+   - If not found, apply configured policy (default recommended: reject + log error).
+
+5. Error Handling
+   - On deserialization/validation errors, do not persist.
+   - Log error with message key/offset for traceability.
+   - Support retry policy (configurable) for transient failures.
+
+6. Observability
+   - Log successful processing with event ID and event type.
+   - Log failures with cause and Kafka metadata.
+
+## 6. Data Requirements
+### Entities
+- `LibraryEvent`
+  - `libraryEventId` (PK)
+  - `eventType`
+  - `book` (relationship)
+
+- `Book`
+  - `bookId` (PK)
+  - `bookName`
+  - `bookAuthor`
+
+### Event Contract (JSON)
+- `libraryEventId` (required for `UPDATE`, optional for `ADD` depending on DB generation strategy)
+- `eventType` (`ADD`, `UPDATE`)
+- `book` object with required fields
+
+## 7. Module-by-Layer Mapping
+1. Consumer Layer
+   - Module: `consumer`
+   - Path: `src/main/java/com/learnkafka/consumer`
+   - Class: `LibraryEventsConsumer`
+   - Responsibility: Kafka listener, delegate to service, handle listener-level exceptions.
+
+2. Service Layer
+   - Module: `service`
+   - Path: `src/main/java/com/learnkafka/service`
+   - Class: `LibraryEventService`
+   - Responsibility: business branching for `ADD` vs `UPDATE`, transactions, domain rules.
+
+3. Repository Layer
+   - Module: `repository`
+   - Path: `src/main/java/com/learnkafka/repository`
+   - Interfaces: `LibraryEventRepository`, `BookRepository`
+   - Responsibility: CRUD and lookup operations.
+
+4. Domain Layer
+   - Module: `domain`
+   - Path: `src/main/java/com/learnkafka/domain`
+   - Classes: `LibraryEvent`, `Book`, `EventType`
+   - Responsibility: entity modeling and relationships.
+
+5. Validation/Mapping Layer
+   - Module: `validation` / `mapper` (optional split)
+   - Path: `src/main/java/com/learnkafka`
+   - Responsibility: payload validation and DTO-to-entity conversion if DTOs are introduced.
+
+6. Configuration Layer
+   - Module: `config`
+   - Path: `src/main/resources/application.yml`
+   - Responsibility: Kafka consumer settings, DB connectivity, retry/backoff tuning.
+
+7. Test Layer
+   - Module: `test`
+   - Path: `src/test/java/com/learnkafka`
+   - Responsibility: unit/integration tests for consumer/service/repository behavior.
+
+## 8. Acceptance Criteria
+1. App consumes messages from `library-events`.
+2. `ADD` event inserts `LibraryEvent` and related `Book` into DB.
+3. `UPDATE` event updates existing DB record when ID exists.
+4. Invalid events are not persisted and are logged with actionable details.
+5. Transaction guarantees: partial writes do not occur for `ADD`/`UPDATE`.
+6. Automated tests cover happy paths and key failure paths.
+
+## 9. Dependencies (Current)
+- Spring Data JPA
+- Spring Kafka
+- Spring Validation
+- Spring WebMVC
+- PostgreSQL runtime driver
+- Spring test dependencies and JUnit platform launcher
+
+## 10. Open Decisions
+1. Missing-record `UPDATE` policy: reject/log vs upsert vs DLT.
+2. Whether to introduce DLT topic in this phase.
+3. Whether `libraryEventId` is producer-provided or DB-generated for `ADD`.
+
+## 11. Error Handling Strategies (Comprehensive)
+
+This section defines failure scenarios and supported handling approaches.
+Final implementation may choose one approach per scenario, but all options are documented here.
+
+### 11.1 Guiding Principles
+- Never lose messages silently.
+- Avoid partial DB writes (transactional boundaries).
+- Keep retries bounded and observable.
+- Separate non-retryable errors (bad data) from retryable errors (transient infrastructure issues).
+- Preserve traceability with Kafka metadata (`topic`, `partition`, `offset`, key, timestamp).
+
+### 11.2 Failure Categories
+1. Invalid event payload (schema/JSON/required fields/eventType issues)
+2. Business validation failure (e.g., `UPDATE` without ID, update target not found)
+3. Database failures (connectivity, timeout, deadlock, unique key violation)
+4. Kafka/infrastructure failures (broker unavailable, rebalance interruptions)
+5. Unexpected application errors (null pointer, mapping bug, serialization edge cases)
+
+### 11.3 Strategy Options by Scenario
+
+#### A) Invalid Event (Deserialization / Schema / Required Fields)
+**Examples**
+- Malformed JSON
+- Missing `eventType`
+- Missing `book`
+- Invalid enum value for `eventType`
+
+**Approach Options**
+1. **Fail Fast + Dead Letter Topic (DLT) [Recommended]**
+   - Mark as non-retryable.
+   - Publish original payload + error metadata to `library-events.DLT`.
+   - Commit offset after DLT publish succeeds.
+2. **Fail Fast + Error Table**
+   - Persist bad event into `failed_library_events` table for manual replay.
+   - Commit offset to prevent poison-pill loops.
+3. **Drop + Log (Not recommended except low-criticality)**
+   - Log structured error and skip.
+   - Risk: data loss/no replay source.
+
+**Recommendation**
+- Use non-retryable classification + DLT.
+
+#### B) Business Validation Failure
+**Examples**
+- `UPDATE` received without `libraryEventId`
+- `UPDATE` for non-existent `LibraryEvent`
+
+**Approach Options**
+1. **Reject + DLT [Recommended default]**
+   - Treat as non-retryable business error.
+   - Route to DLT with reason code (`MISSING_ID`, `NOT_FOUND`, etc.).
+2. **Upsert on UPDATE**
+   - If not found, create new record.
+   - Useful for eventual consistency, but can hide producer sequencing issues.
+3. **Retry then Reject**
+   - Retry briefly in case ordering lag exists, then DLT.
+   - Adds latency and complexity.
+
+**Recommendation**
+- Default to Reject + DLT unless business explicitly approves upsert semantics.
+
+#### C) Database Transient Failure
+**Examples**
+- Connection timeout
+- Temporary network issue
+- DB restart/failover
+- Deadlock loser exception
+
+**Approach Options**
+1. **Retry with Exponential Backoff [Recommended]**
+   - Limited attempts (e.g., 3-5).
+   - Jitter to avoid retry storms.
+   - If exhausted, route to DLT or retry topic.
+2. **Retry Topics Pattern**
+   - Send to delayed retry topics (`.retry.1m`, `.retry.5m`, etc.).
+   - Better for long outage windows.
+3. **Pause Consumer + Alert**
+   - Temporarily stop consumption until DB recovers.
+   - Prevents backlog of failed attempts but can increase lag.
+
+**Recommendation**
+- Start with bounded in-place retries; move to retry topics if outage windows are long.
+
+#### D) Database Non-Transient Failure
+**Examples**
+- Constraint violation (duplicate key where not expected)
+- Data truncation / invalid column values
+- Mapping mismatch
+
+**Approach Options**
+1. **Classify as Non-Retryable + DLT [Recommended]**
+2. **Error Table + Manual Reprocess**
+3. **Skip with Alert**
+
+**Recommendation**
+- No blind retries; send to DLT/error store with full diagnostics.
+
+#### E) Kafka Consumer/Infrastructure Failures
+**Examples**
+- Rebalance events
+- Broker temporarily unreachable
+- Commit failures
+
+**Approach Options**
+1. **Rely on Kafka Client Recovery + Idempotent Processing [Recommended]**
+2. **Manual Pause/Resume hooks during incidents**
+3. **Escalation via alerts when lag threshold breached**
+
+**Recommendation**
+- Ensure processing idempotency and strong monitoring on consumer lag.
+
+#### F) Unexpected Runtime Exceptions
+**Approach Options**
+1. **Global Error Handler + Retry Classification [Recommended]**
+   - Unknown exceptions retry a few times, then DLT.
+2. **Immediate DLT**
+   - Faster isolation, less chance of duplicate side effects.
+3. **Crash and Restart**
+   - Simple but can cause repeated poison-message crashes if unclassified.
+
+**Recommendation**
+- Use global handler with exception classification rules.
+
+### 11.4 Retry Policy (Proposed Defaults)
+- `maxAttempts`: 3
+- Backoff: exponential (`1s`, `2s`, `4s`) with jitter
+- Retry only for transient exceptions:
+  - DB connectivity/timeouts
+  - transient network errors
+- Non-retryable:
+  - deserialization/schema validation failures
+  - business rule violations
+  - known constraint/mapping errors
+
+### 11.5 Offset Commit Semantics
+- Commit only after:
+  - successful DB transaction, or
+  - successful handoff to DLT/error store.
+- Do not commit before processing outcome is known.
+- Prevent poison-pill infinite loops by classifying non-retryable errors and routing away from main topic.
+
+### 11.6 DLT / Error Payload Contract
+Include:
+- original message payload
+- Kafka metadata (`topic`, `partition`, `offset`, `key`, `timestamp`)
+- `errorType` (e.g., `DESERIALIZATION_ERROR`, `DB_TIMEOUT`, `BUSINESS_NOT_FOUND`)
+- `errorMessage`
+- stack trace snippet (optional/truncated)
+- processing timestamp
+- service version
+
+### 11.7 Observability and Alerting
+- Metrics:
+  - processed count
+  - success/failure rate
+  - retry count
+  - DLT publish count
+  - consumer lag
+  - DB latency
+- Alerts:
+  - DLT spike
+  - retry exhaustion spike
+  - consumer lag threshold breach
+  - DB connectivity failures
+- Logs:
+  - structured JSON logs with correlation/event IDs.
+
+### 11.8 Idempotency and Duplicate Handling
+- Enforce unique identity for `libraryEventId` where appropriate.
+- For duplicate `ADD`, choose one:
+  1. ignore duplicate and log
+  2. treat as update
+  3. fail to DLT
+- Document final duplicate policy in implementation config.
+
+### 11.9 Operational Runbook (Minimum)
+- How to replay from DLT/error table.
+- How to pause/resume consumers.
+- How to switch retry aggressiveness during incidents.
+- How to inspect and remediate `UPDATE` not found events.
+
+### 11.10 Decision Table (To Finalize Before Build)
+1. `UPDATE` not found -> Reject + DLT / Upsert / Retry then DLT
+2. Invalid payload -> DLT / Error table / Drop+log
+3. DB transient failure -> In-place retry / Retry topics / Pause consumer
+4. DB non-transient failure -> DLT / Error table
+5. Duplicate `ADD` -> Ignore / Update / DLT

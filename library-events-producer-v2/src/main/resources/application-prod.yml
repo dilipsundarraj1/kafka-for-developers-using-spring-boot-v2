@@ -1,0 +1,8 @@
+spring:
+  kafka:
+    bootstrap-servers: kafka.prod.com:9092
+
+library:
+  events:
+    topic: library-events
+
