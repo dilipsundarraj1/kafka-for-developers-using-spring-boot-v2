@@ -13,209 +13,187 @@ Implement a Kafka consumer for topic `library-events` that:
 - Spring Kafka + Spring Data JPA are used.
 - Error handling options from PRD section 11 are in scope (retry + DLT recommended).
 
-## 3. Layer-wise Implementation Roadmap
+## 3. Execution-Order Implementation Roadmap
 
-### Layer 1: Domain Model
-Path: `src/main/java/com/learnkafka/domain`
+> **Guiding principle:** Build the consumer-first pipeline incrementally — get messages
+> flowing, then deserialize them, then persist, then add business rules. Each step
+> produces a runnable, testable application.
 
-#### Modules
-- `EventType` enum
-- `Book` entity
-- `LibraryEvent` entity
+### Step 1: Kafka Consumer + Configuration ✦ START HERE
+Path: `src/main/java/com/learnkafka/consumer`, `src/main/java/com/learnkafka/config`, `src/main/resources/application.properties`
 
-#### Tasks
-1. Create `EventType` enum with values `ADD`, `UPDATE`.
-2. Create `Book` entity with fields: `bookId` (PK), `bookName`, `bookAuthor`.
-3. Create `LibraryEvent` entity with fields: `libraryEventId` (PK), `eventType`, `book` (relationship).
-4. Add JPA annotations (`@Entity`, `@Id`, `@GeneratedValue`, `@OneToOne`, `@Enumerated`).
-5. Add field-level constraints (`@NotNull`, `@NotBlank` where applicable).
-6. Define cascade strategy for `LibraryEvent` -> `Book` relationship.
-7. Decide ID generation strategy (`GenerationType.IDENTITY` vs producer-provided).
-
-#### Deliverables
-- Persistable domain model with correct JPA mappings.
-- Cascade and relationship behavior validated.
-
-#### Acceptance Criteria
-- Entities compile and map to expected DB schema.
-- Relationship between `LibraryEvent` and `Book` is correctly defined.
-
----
-
-### Layer 2: DTO and Mapping
-Path: `src/main/java/com/learnkafka/dto`
-
-#### Modules
-- `LibraryEventDto`
-- `BookDto`
-- `LibraryEventMapper`
-
-#### Tasks
-1. Create `LibraryEventDto` record/class with fields: `libraryEventId`, `eventType`, `book`.
-2. Create `BookDto` record/class with fields: `bookId`, `bookName`, `bookAuthor`.
-3. Add bean validation annotations on DTOs:
-   - `@NotNull` on `eventType` and `book`.
-   - `@NotBlank` on `bookName`, `bookAuthor`.
-   - `@NotNull` on `libraryEventId` only enforced conditionally for `UPDATE` (validated in service).
-4. Create `LibraryEventMapper` utility to convert:
-   - `LibraryEventDto` -> `LibraryEvent` entity (for `ADD`).
-   - `LibraryEventDto` -> update fields on existing `LibraryEvent` entity (for `UPDATE`).
-5. Keep DTOs free of JPA annotations — strict separation from persistence model.
-
-#### Deliverables
-- Inbound payload DTOs decoupled from JPA entities.
-- Mapper with clear `toEntity()` and `updateEntity()` methods.
-- Bean validation annotations for early input rejection.
-
-#### Acceptance Criteria
-- DTOs deserialize correctly from Kafka JSON payloads.
-- Mapper produces valid entities for both `ADD` and `UPDATE` flows.
-- Validation annotations reject missing/invalid fields before service logic runs.
-
----
-
-### Layer 3: Repository
-Path: `src/main/java/com/learnkafka/repository`
-
-#### Modules
-- `LibraryEventRepository`
-- `BookRepository` (if explicit access needed)
-
-#### Tasks
-1. Create `LibraryEventRepository extends JpaRepository<LibraryEvent, Integer>`.
-2. Create `BookRepository extends JpaRepository<Book, Integer>` (optional, for direct book queries).
-3. Add custom query methods if needed (e.g., existence check by ID).
-4. Add indexes/unique constraints for idempotency strategy.
-
-#### Deliverables
-- Repository interfaces supporting all service-layer use cases.
-- DB schema aligned to entity model.
-
-#### Acceptance Criteria
-- CRUD operations work for `LibraryEvent` and `Book`.
-- Save, find-by-ID, and update flows validated via repository tests.
-
----
-
-### Layer 4: Kafka Consumer
-Path: `src/main/java/com/learnkafka/consumer`
+#### Goal
+Stand up a working Kafka listener that reads raw messages from `library-events` and logs them. No deserialization, no DB — just prove connectivity.
 
 #### Modules
 - `LibraryEventsConsumer`
+- `LibraryEventsConsumerConfig` (basic factory only)
+- Kafka consumer properties in `application.properties`
 
 #### Tasks
-1. Create `LibraryEventsConsumer` class annotated with `@Component`.
-2. Add `@KafkaListener(topics = "library-events")` method.
-3. Accept message payload as `ConsumerRecord<Integer, String>`.
-4. Extract and log Kafka metadata: topic, partition, offset, key.
-5. Delegate processing to `LibraryEventService.processEvent()`.
-6. Keep listener thin — no business logic inside.
-7. Wire listener error flow to central error handler config.
-8. Ensure commit/ack behavior follows success or DLT handoff policy.
+1. Configure Kafka consumer properties in `application.yml`:
+   - `spring.kafka.consumer.bootstrap-servers`
+   - `spring.kafka.consumer.group-id=library-events-listener-group`
+   - `spring.kafka.consumer.key-deserializer=org.apache.kafka.common.serialization.IntegerDeserializer`
+   - `spring.kafka.consumer.value-deserializer=org.apache.kafka.common.serialization.StringDeserializer`
+   - `spring.kafka.consumer.auto-offset-reset=latest`
+2. Create `LibraryEventsConsumerConfig` with a `ConcurrentKafkaListenerContainerFactory` bean (default error handler for now).
+3. Create `LibraryEventsConsumer` class annotated with `@Component`.
+4. Add `@KafkaListener(topics = "library-events")` method.
+5. Accept message as `ConsumerRecord<Integer, String>`.
+6. Log full Kafka metadata: topic, partition, offset, key, value.
+7. **No service delegation yet** — the listener just logs the raw payload.
 
 #### Deliverables
-- Listener class with single responsibility: receive + delegate.
-- Structured logs for consumption entry points.
-- Integration hook to service contract (`processEvent`).
-
-#### Risks
-- Tight coupling if listener performs domain logic.
-- Rework if ack mode is finalized before retry/DLT decisions.
+- A running consumer that connects to Kafka and logs every message from `library-events`.
+- Kafka consumer properties externalized.
+- Basic container factory configuration.
 
 #### Acceptance Criteria
-- Messages from `library-events` are consumed.
-- Listener forwards payload to service with metadata context.
-- Listener-level error paths are tested.
+- Application starts without errors and joins the consumer group.
+- Publishing a test message to `library-events` produces a log line with topic, partition, offset, key, and value.
+- No DB or DTO code is required at this stage.
 
 ---
 
-### Layer 5: Service
-Path: `src/main/java/com/learnkafka/service`
+### Step 2: DTO + Deserialization
+Path: `src/main/java/com/learnkafka/dto`
+
+#### Goal
+Deserialize the raw JSON string received in Step 1 into typed DTO objects. Validate structure. No persistence yet.
 
 #### Modules
-- `LibraryEventService`
+- `LibraryEventDto` (Java record)
+- `BookDto` (Java record)
 
 #### Tasks
-1. Define service method: `processEvent(ConsumerRecord<Integer, String> consumerRecord)`.
-2. Deserialize JSON payload to `LibraryEventDto` using `ObjectMapper`.
-3. Validate DTO (bean validation + conditional checks).
-4. Map DTO to entity using `LibraryEventMapper`.
-5. Implement event-type branch:
-   - `ADD`: map DTO to new entity, persist `LibraryEvent` + `Book` transactionally via repository.
-   - `UPDATE`: fetch existing `LibraryEvent` by ID; apply updates from DTO via mapper; save.
-4. Add conditional validations:
-   - `UPDATE` requires non-null `libraryEventId`.
-   - `book` must be present for both `ADD` and `UPDATE`.
-5. Implement update-not-found policy (reject + log error as default).
-6. Add `@Transactional` boundaries to prevent partial writes.
-7. Classify exceptions into retryable vs non-retryable categories.
+1. Create `BookDto` record with fields: `bookId` (Integer), `bookName` (String), `bookAuthor` (String).
+2. Create `LibraryEventDto` record with fields: `libraryEventId` (Integer), `eventType` (EventType — reuse existing enum from domain), `book` (BookDto).
+3. Keep DTOs free of JPA annotations — strict separation from persistence model.
+4. Add basic bean validation annotations on DTOs (lightweight, not full business rules):
+   - `@NotNull` on `eventType` and `book` in `LibraryEventDto`.
+   - `@NotBlank` on `bookName`, `bookAuthor` in `BookDto`.
+   - `@NotNull` on `bookId` in `BookDto`.
+5. Create a stub `LibraryEventService` with method `processEvent(ConsumerRecord<Integer, String>)` that:
+   - Deserializes JSON value to `LibraryEventDto` using `ObjectMapper`.
+   - Logs the deserialized DTO.
+   - Does **not** persist anything yet.
+6. Update `LibraryEventsConsumer` to delegate to `LibraryEventService.processEvent()`.
 
 #### Deliverables
-- Service implementation with deterministic behavior for `ADD` / `UPDATE`.
-- Validation and business exceptions.
-- Transaction-safe persistence orchestration.
-
-#### Risks
-- Ambiguous policy for missing `UPDATE` target can cause inconsistent behavior.
-- Mixing parsing + persistence in same method can reduce testability.
+- Typed DTO records that deserialize from Kafka JSON payloads.
+- Consumer now delegates to service; service deserializes and logs.
+- Bean validation annotations ready for later enforcement.
 
 #### Acceptance Criteria
-- `ADD` and `UPDATE` paths pass unit tests.
-- Not-found and invalid payload behaviors are deterministic.
-- Exception classification is usable by Kafka error handler.
+- Sending a valid JSON message to `library-events` produces a log line showing the deserialized `LibraryEventDto`.
+- Malformed JSON causes a `JsonProcessingException` (logged, not swallowed).
+- DTOs have no JPA dependency.
 
 ---
 
-### Layer 6: JPA Configuration and Wiring
-Path: `src/main/resources/application.properties`
+### Step 3: Domain Model + Repository + DB Persistence
+Path: `src/main/java/com/learnkafka/domain`, `src/main/java/com/learnkafka/repository`, `src/main/java/com/learnkafka/dto`, `src/main/resources/application.properties`
+
+#### Goal
+Wire persistence end-to-end: map DTOs to JPA entities and save them to PostgreSQL. Initially handle only the `ADD` event type (simple insert).
+
+#### Pre-existing (from Layer 1)
+- `EventType` enum — ✅ already created
+- `Book` entity — ✅ already created
+- `LibraryEvent` entity — ✅ already created
+
+#### Modules
+- `LibraryEventRepository`
+- `LibraryEventMapper`
+- JPA/datasource configuration in `application.properties`
 
 #### Tasks
-1. Configure datasource URL, username, password for PostgreSQL.
-2. Set JPA DDL auto mode (`create`, `update`, or `validate` depending on environment).
-3. Enable SQL logging for development/debug.
-4. Set Hibernate dialect for PostgreSQL.
-5. Verify entity scan picks up `com.learnkafka.domain` package.
+1. Configure JPA/datasource properties in `application.properties`:
+   - `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password`
+   - `spring.jpa.hibernate.ddl-auto=update`
+   - `spring.jpa.show-sql=true` (development)
+   - `spring.jpa.properties.hibernate.format_sql=true`
+2. Create `LibraryEventRepository extends JpaRepository<LibraryEvent, Integer>`.
+3. Create `LibraryEventMapper` utility class with:
+   - `toEntity(LibraryEventDto dto)` → new `LibraryEvent` + `Book` entities.
+   - `toBookEntity(BookDto dto)` → new `Book` entity.
+4. Update `LibraryEventService.processEvent()` to:
+   - Deserialize JSON to `LibraryEventDto` (already done in Step 2).
+   - Map DTO → entity via `LibraryEventMapper.toEntity()`.
+   - Save entity via `LibraryEventRepository.save()`.
+   - Add `@Transactional` annotation.
+5. Verify cascade: saving `LibraryEvent` also persists `Book` (via `CascadeType.ALL`).
+6. Verify entity scan picks up `com.learnkafka.domain` package.
 
 #### Deliverables
-- Working DB connectivity from app to PostgreSQL.
-- Entities auto-create or validate against DB schema.
+- End-to-end flow: Kafka message → DTO → Entity → PostgreSQL.
+- Repository interface for `LibraryEvent`.
+- Mapper with `toEntity()` method.
+- Working DB connectivity.
 
 #### Acceptance Criteria
+- Sending an `ADD` event to `library-events` inserts both `LibraryEvent` and `Book` rows in PostgreSQL.
+- `LibraryEvent` and `Book` tables are auto-created on startup.
 - App starts and connects to DB without errors.
-- `LibraryEvent` and `Book` tables are created/validated on startup.
+
+---
+
+### Step 4: Business Logic, Validation, and Error Handling
+Path: `src/main/java/com/learnkafka/service`, `src/main/java/com/learnkafka/dto`, `src/main/java/com/learnkafka/config`
+
+#### Goal
+Add full business logic: `ADD`/`UPDATE` branching, conditional validation, exception classification, and Kafka error handling with retry + DLT.
+
+#### Modules
+- `LibraryEventService` (full implementation)
+- `LibraryEventMapper` (add `updateEntity()`)
+- `LibraryEventsConsumerConfig` (error handler + retry + DLT)
+
+#### Tasks — Business Logic
+1. Implement event-type branching in `LibraryEventService.processEvent()`:
+   - `ADD`: map DTO to new entity, persist via repository (already working from Step 3).
+   - `UPDATE`: fetch existing `LibraryEvent` by ID; apply updates from DTO via mapper; save.
+2. Add `updateEntity(LibraryEventDto dto, LibraryEvent existing)` to `LibraryEventMapper`.
+3. Implement update-not-found policy: throw `IllegalArgumentException` with descriptive message.
+
+#### Tasks — Validation
+4. Enforce conditional validations in service:
+   - `UPDATE` requires non-null `libraryEventId` → reject with `IllegalArgumentException`.
+   - `book` must be present for both `ADD` and `UPDATE`.
+5. Validate DTO using bean validation (`Validator`) or manual checks in service.
+6. Classify exceptions:
+   - **Non-retryable:** `IllegalArgumentException`, `JsonProcessingException` (bad data, will never succeed).
+   - **Retryable:** all others (transient DB errors, network issues).
+
+#### Tasks — Error Handling & Retry
+7. Update `LibraryEventsConsumerConfig`:
+   - Configure `DefaultErrorHandler` with `FixedBackOff` or `ExponentialBackOff` (3 attempts, `1s`/`2s`/`4s`).
+   - Register non-retryable exception classes.
+   - Configure `DeadLetterPublishingRecoverer` for DLT routing to `library-events.DLT`.
+   - Ensure offset commits only after success or DLT handoff.
+8. Ensure `@Transactional` boundaries prevent partial writes on failure.
+
+#### Deliverables
+- Full `ADD` + `UPDATE` service implementation.
+- Conditional validation with deterministic rejection.
+- Exception classification driving retry vs DLT behavior.
+- Error handler with backoff, retry, and dead-letter routing.
+
+#### Acceptance Criteria
+- `ADD` event inserts `LibraryEvent` + `Book` in DB.
+- `UPDATE` event with valid ID updates existing record.
+- `UPDATE` event with non-existent ID is rejected (non-retryable).
+- `UPDATE` event with null `libraryEventId` is rejected (non-retryable).
+- Malformed JSON is rejected (non-retryable → DLT).
+- Transient DB failure triggers retry with backoff.
+- Exhausted retries route to `library-events.DLT`.
 
 ---
 
 ## 4. Cross-Cutting Implementation
 
-### 4.1 Error Handling and Retry
-Path: `src/main/java/com/learnkafka/config`
-
-#### Modules
-- `LibraryEventsConsumerConfig`
-
-#### Tasks
-1. Configure `ConcurrentKafkaListenerContainerFactory` with custom error handler.
-2. Use `DefaultErrorHandler` with `FixedBackOff` or `ExponentialBackOff`.
-3. Set retry policy: 3 attempts, exponential backoff (`1s`, `2s`, `4s`) with jitter.
-4. Mark non-retryable exceptions:
-   - `IllegalArgumentException` (validation failures)
-   - `JsonProcessingException` (deserialization errors)
-5. Configure `DeadLetterPublishingRecoverer` for DLT routing to `library-events.DLT`.
-6. Ensure offset commits only after success or DLT handoff.
-
-### 4.2 Kafka Consumer Configuration
-Path: `src/main/resources/application.properties`
-
-#### Tasks
-1. Set bootstrap servers.
-2. Set consumer group ID.
-3. Configure key/value deserializers (`IntegerDeserializer`, `StringDeserializer`).
-4. Set auto-offset-reset policy (`latest` or `earliest`).
-5. Set listener concurrency.
-6. Configure ack mode (`MANUAL` if needed, or rely on default).
-
-### 4.3 Observability
+### 4.1 Observability
 #### Tasks
 1. Add structured logs for event lifecycle (received, processing, persisted, failed).
 2. Log Kafka metadata on every event (topic, partition, offset, key).
@@ -233,27 +211,27 @@ Path: `src/main/resources/application.properties`
 ### 5.1 Unit Tests
 Path: `src/test/java/com/learnkafka/service`
 
-- `ADD` event -> successful insert
-- `UPDATE` event -> successful update
-- `UPDATE` event -> not found behavior
-- Missing `book` -> validation failure
-- Missing `libraryEventId` on `UPDATE` -> validation failure
+- `ADD` event → successful insert
+- `UPDATE` event → successful update
+- `UPDATE` event → not found behavior
+- Missing `book` → validation failure
+- Missing `libraryEventId` on `UPDATE` → validation failure
 - Exception classification (retryable vs non-retryable)
 
 ### 5.2 Integration Tests
 Path: `src/test/java/com/learnkafka/consumer`
 
-- Consume `ADD` from Kafka -> persisted in DB
-- Consume `UPDATE` from Kafka -> updated in DB
-- Invalid payload -> routed to error flow (DLT/logged)
-- DB transient failure -> retry policy triggered
+- Consume `ADD` from Kafka → persisted in DB
+- Consume `UPDATE` from Kafka → updated in DB
+- Invalid payload → routed to error flow (DLT/logged)
+- DB transient failure → retry policy triggered
 
 ### 5.3 Repository Tests
 Path: `src/test/java/com/learnkafka/repository`
 
-- Save `LibraryEvent` with `Book` -> both persisted
-- Find by ID -> returns correct entity
-- Update existing entity -> fields updated
+- Save `LibraryEvent` with `Book` → both persisted
+- Find by ID → returns correct entity
+- Update existing entity → fields updated
 - Cascade behavior validated
 
 ### 5.4 Minimum Acceptance Test Matrix
@@ -268,41 +246,61 @@ Path: `src/test/java/com/learnkafka/repository`
 
 ---
 
-## 6. Recommended Execution Sequence
-Even with the chosen layering, this sequence reduces rework:
+## 6. Execution Sequence Summary
 
-| Step | Layer | Reason |
-|------|-------|--------|
-| 1 | Domain Model (entities + enum) | Foundation for all other layers |
-| 2 | DTO + Mapping (DTOs, mapper, validation) | Decouple Kafka payload from JPA entities |
-| 3 | Repository | Persistence contracts before business logic |
-| 4 | Service (`ADD` then `UPDATE`) | Real transactional logic with working DB |
-| 5 | Kafka Consumer | Thin listener delegates to proven service |
-| 6 | Error Handler + Retry + DLT | Wired after exception types are known |
-| 7 | Configuration hardening | Externalize properties, tune concurrency |
-| 8 | Unit + Integration Tests | Validate all paths |
-| 9 | Observability + Runbook | Production readiness |
+| Step | What | Key Outcome |
+|------|------|-------------|
+| **1** | **Kafka Consumer + Config** | Raw messages logged from `library-events` topic |
+| **2** | **DTO + Deserialization** | JSON → typed `LibraryEventDto`; consumer delegates to service |
+| **3** | **Domain Model + Repository + DB Save** | DTO → Entity → PostgreSQL (ADD flow works end-to-end) |
+| **4** | **Business Logic + Validation + Error Handling** | ADD/UPDATE branching, validation, retry, DLT |
+| 5 | Unit + Integration Tests | Validate all paths |
+| 6 | Observability + Runbook | Production readiness |
+
+> **Rationale:** This outside-in order lets you verify each layer independently.
+> Step 1 proves Kafka connectivity. Step 2 proves deserialization. Step 3 proves
+> persistence. Step 4 adds the business rules on top of a known-working pipeline.
 
 ---
 
 ## 7. Implementation Checklist
-- [ ] Finalize decision table options from `docs/PRD.md` section 11.10
-- [ ] Create `EventType` enum
-- [ ] Create `Book` entity
-- [ ] Create `LibraryEvent` entity with `Book` relationship
-- [ ] Create `LibraryEventDto` and `BookDto`
-- [ ] Create `LibraryEventMapper` (toEntity + updateEntity)
-- [ ] Add bean validation annotations on DTOs
-- [ ] Create `LibraryEventRepository`
-- [ ] Create `BookRepository` (if needed)
-- [ ] Implement `LibraryEventService.processEvent()`
-- [ ] Implement `ADD` path in service
-- [ ] Implement `UPDATE` path in service
-- [ ] Add validation and exception classification
+
+### Step 1: Kafka Consumer + Configuration
+- [ ] Configure Kafka consumer properties (`bootstrap-servers`, `group-id`, deserializers, `auto-offset-reset`)
+- [ ] Create `LibraryEventsConsumerConfig` with container factory bean
 - [ ] Create `LibraryEventsConsumer` with `@KafkaListener`
-- [ ] Configure retry/backoff and DLT in `LibraryEventsConsumerConfig`
-- [ ] Configure Kafka consumer properties
-- [ ] Configure JPA/datasource properties
+- [ ] Log raw `ConsumerRecord` metadata (topic, partition, offset, key, value)
+- [ ] Verify consumer joins group and receives messages
+
+### Step 2: DTO + Deserialization
+- [ ] Create `BookDto` record
+- [ ] Create `LibraryEventDto` record
+- [ ] Add bean validation annotations on DTOs
+- [ ] Create stub `LibraryEventService.processEvent()` — deserialize + log
+- [ ] Update consumer to delegate to service
+- [ ] Verify deserialization of valid JSON payloads
+
+### Step 3: Domain Model + Repository + DB Save
+- [x] Create `EventType` enum ✅
+- [x] Create `Book` entity ✅
+- [x] Create `LibraryEvent` entity with `Book` relationship ✅
+- [ ] Configure JPA/datasource properties for PostgreSQL
+- [ ] Create `LibraryEventRepository`
+- [ ] Create `LibraryEventMapper` with `toEntity()` + `toBookEntity()`
+- [ ] Update service to map DTO → entity and save via repository
+- [ ] Verify `ADD` event persists `LibraryEvent` + `Book` in DB
+
+### Step 4: Business Logic + Validation + Error Handling
+- [ ] Implement `UPDATE` path in service (fetch → update → save)
+- [ ] Add `updateEntity()` to `LibraryEventMapper`
+- [ ] Add conditional validations (`libraryEventId` required for `UPDATE`, `book` required always)
+- [ ] Implement update-not-found policy (reject + log)
+- [ ] Classify exceptions (retryable vs non-retryable)
+- [ ] Configure retry/backoff in `LibraryEventsConsumerConfig`
+- [ ] Configure `DeadLetterPublishingRecoverer` for DLT routing
+- [ ] Finalize decision table options from `docs/PRD.md` section 11.10
+
+### Post-Implementation
 - [ ] Add unit tests for service
 - [ ] Add integration tests for consumer
 - [ ] Add repository tests
