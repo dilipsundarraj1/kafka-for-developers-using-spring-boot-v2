@@ -273,11 +273,11 @@ Path: `src/test/java/com/learnkafka/repository`
 - [ ] Verify consumer joins group and receives messages
 
 ### Step 2: DTO + Deserialization
-- [ ] Create `BookDto` record
-- [ ] Create `LibraryEventDto` record
-- [ ] Add bean validation annotations on DTOs
-- [ ] Create stub `LibraryEventService.processEvent()` — deserialize + log
-- [ ] Update consumer to delegate to service
+- [x] Create `BookDto` record ✅
+- [x] Create `LibraryEventDto` record ✅
+- [x] Add bean validation annotations on DTOs ✅
+- [x] Create stub `LibraryEventService.processEvent()` — deserialize + log ✅
+- [x] Update consumer to delegate to service ✅
 - [ ] Verify deserialization of valid JSON payloads
 
 ### Step 3: Domain Model + Repository + DB Save

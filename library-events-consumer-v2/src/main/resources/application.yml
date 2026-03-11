@@ -9,7 +9,11 @@ spring:
       bootstrap-servers: localhost:9092
       group-id: library-events-listener-group
       key-deserializer: org.apache.kafka.common.serialization.IntegerDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       auto-offset-reset: latest
+      properties:
+        spring.json.trusted.packages: com.learnkafka.dto,com.learnkafka.domain
+        spring.json.value.default.type: com.learnkafka.dto.LibraryEventDto
+        spring.json.type.mapping: com.learnkafka.domain.LibraryEvent:com.learnkafka.dto.LibraryEventDto
 
 
