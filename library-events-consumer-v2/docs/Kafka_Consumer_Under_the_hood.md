@@ -1,5 +1,23 @@
 # Kafka Consumer Diagrams
 
+## Table of Contents
+
+- [Section 1: @KafkaListener Flow — How Records Are Polled](#section-1-kafkalistener-flow--how-records-are-polled)
+  - [Step 1 — Application Startup](#step-1--application-startup)
+  - [Step 2 — Container Factory Setup](#step-2--container-factory-setup)
+  - [Step 3 — Concurrent Message Listener Container & Poll Loop](#step-3--concurrent-message-listener-container--poll-loop)
+  - [Step 4 — @KafkaListener Method Dispatch](#step-4--kafkalistener-method-dispatch)
+  - [Step 5 — Service Layer](#step-5--service-layer)
+  - [Step 6 — Offset Commit](#step-6--offset-commit)
+- [Section 2: Kafka Consumer Auto-Configuration Flow](#section-2-kafka-consumer-auto-configuration-flow)
+  - [Step 1 — The trigger: spring-boot-starter-kafka](#step-1--the-trigger-spring-boot-starter-kafka)
+  - [Step 2 — Auto-configuration class chain](#step-2--auto-configuration-class-chain)
+  - [Step 3 — Your config overrides the factory](#step-3--your-config-overrides-the-factory)
+  - [Step 4 — application.yml → KafkaProperties binding](#step-4--applicationyml--kafkaproperties-binding)
+  - [Step 5 — @EnableKafka + @KafkaListener wiring](#step-5--enablekafka--kafkalistener-wiring)
+  - [Step 6 — Complete auto-config picture](#step-6--complete-auto-config-picture)
+  - [Key Takeaway](#key-takeaway)
+
 ---
 
 ## Section 1: @KafkaListener Flow — How Records Are Polled
