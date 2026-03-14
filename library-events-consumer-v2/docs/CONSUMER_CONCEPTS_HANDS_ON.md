@@ -73,7 +73,7 @@ All instances of this application that start with this `group-id` form **one con
 #### Step 1: Check topic partitions
 
 ```bash
-kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic library-events
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 --describe --topic library-events
 ```
 
 Note the **partition count** (e.g., 3).
@@ -180,15 +180,45 @@ for each one, and **after all succeed**, commits the offsets.
 
 ```bash
 # Stop the consumer app if running
+# Make sure the library-events-producer-api is running on port 8080
 
-# Produce 3 messages
-kafka-console-producer.sh --bootstrap-server localhost:9092 \
-  --topic library-events \
-  --property "parse.key=true" --property "key.separator=:" \
-  --property "key.serializer=org.apache.kafka.common.serialization.IntegerSerializer"
+# Produce 3 messages using the producer API
+curl -X POST http://localhost:8080/v1/library-events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "libraryEventId": null,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 1,
+      "bookName": "Clean Code",
+      "bookAuthor": "Robert C. Martin"
+    }
+  }'
+
+curl -X POST http://localhost:8080/v1/library-events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "libraryEventId": null,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 2,
+      "bookName": "Spring Boot in Action",
+      "bookAuthor": "Craig Walls"
+    }
+  }'
+
+curl -X POST http://localhost:8080/v1/library-events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "libraryEventId": null,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 3,
+      "bookName": "Effective Java",
+      "bookAuthor": "Joshua Bloch"
+    }
+  }'
 ```
-
-Type (or use the producer app to send 3 events).
 
 #### Step 2: Start the consumer with `auto-offset-reset: latest`
 
@@ -221,7 +251,7 @@ SPRING_KAFKA_CONSUMER_GROUP_ID=test-earliest-group ./gradlew bootRun
 #### Step 4: Check committed offsets
 
 ```bash
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+docker exec kafka1 kafka-consumer-groups --bootstrap-server kafka1:19092 \
   --group library-events-listener-group --describe
 ```
 
@@ -311,7 +341,23 @@ public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord,
 
 #### Step 3: Test — observe that offsets are committed only when you call `acknowledge()`
 
-- Start the app, send a message → offset committed (check with `kafka-consumer-groups.sh`).
+Send a message via the producer API:
+
+```bash
+curl -X POST http://localhost:8080/v1/library-events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "libraryEventId": null,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 1,
+      "bookName": "Clean Code",
+      "bookAuthor": "Robert C. Martin"
+    }
+  }'
+```
+
+- Start the app, send a message → offset committed (check with `docker exec kafka1 kafka-consumer-groups --bootstrap-server kafka1:19092 --group library-events-listener-group --describe`).
 - Comment out `acknowledgment.acknowledge()`, restart, send a message → offset is **NOT committed**.
 - Restart the app again → the same message is **re-delivered** (offset wasn't committed).
 
@@ -390,8 +436,47 @@ In the logs, you'll see **three** consumers joining the group:
 
 #### Step 3: Produce messages and observe parallel processing
 
-Send several messages and watch the logs — messages from different partitions are processed
-by **different threads** concurrently:
+Send several messages via the producer API and watch the logs:
+
+```bash
+curl -X POST http://localhost:8080/v1/library-events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "libraryEventId": null,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 1,
+      "bookName": "Clean Code",
+      "bookAuthor": "Robert C. Martin"
+    }
+  }'
+
+curl -X POST http://localhost:8080/v1/library-events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "libraryEventId": null,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 2,
+      "bookName": "Spring Boot in Action",
+      "bookAuthor": "Craig Walls"
+    }
+  }'
+
+curl -X POST http://localhost:8080/v1/library-events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "libraryEventId": null,
+    "libraryEventType": "ADD",
+    "book": {
+      "bookId": 3,
+      "bookName": "Effective Java",
+      "bookAuthor": "Joshua Bloch"
+    }
+  }'
+```
+
+Messages from different partitions are processed by **different threads** concurrently:
 
 ```
 [consumer-0-C-1] ConsumerRecord : ... partition=0 ...
