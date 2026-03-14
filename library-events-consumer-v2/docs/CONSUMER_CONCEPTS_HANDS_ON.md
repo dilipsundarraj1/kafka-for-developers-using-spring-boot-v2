@@ -6,6 +6,32 @@
 
 ---
 
+## Table of Contents
+
+- [1. Consumer Groups and Rebalance — Hands On](#1-consumer-groups-and-rebalance--hands-on)
+  - [What Is a Consumer Group?](#what-is-a-consumer-group)
+  - [Hands-On: Observe Rebalance](#hands-on-observe-rebalance)
+  - [Key Takeaways](#key-takeaways)
+- [2. Default Consumer Offset Management in Spring Kafka — Hands On](#2-default-consumer-offset-management-in-spring-kafka--hands-on)
+  - [What Is an Offset?](#what-is-an-offset)
+  - [Spring Kafka Default Behavior](#spring-kafka-default-behavior)
+  - [Hands-On: Observe Default Offset Behavior](#hands-on-observe-default-offset-behavior)
+  - [`latest` vs `earliest`](#latest-vs-earliest)
+- [3. Manual Consumer Offset Management — Hands On](#3-manual-consumer-offset-management--hands-on)
+  - [Why Manual Offset Management?](#why-manual-offset-management)
+  - [Ack Modes Reference](#ack-modes-reference)
+  - [Hands-On: Switch to MANUAL Acknowledgment](#hands-on-switch-to-manual-acknowledgment)
+  - [When to Use Manual Ack](#when-to-use-manual-ack)
+- [4. Concurrent Consumers — Hands On](#4-concurrent-consumers--hands-on)
+  - [What Is Listener Concurrency?](#what-is-listener-concurrency)
+  - [Hands-On: Enable Concurrent Consumers](#hands-on-enable-concurrent-consumers)
+  - [Concurrency vs Multiple Instances](#concurrency-vs-multiple-instances)
+  - [The Golden Rule](#the-golden-rule)
+  - [Deciding Concurrency for This Project](#deciding-concurrency-for-this-project)
+- [Summary](#summary)
+
+---
+
 ## 1. Consumer Groups and Rebalance — Hands On
 
 ### What Is a Consumer Group?
