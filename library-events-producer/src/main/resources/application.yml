@@ -1,8 +1,25 @@
 spring:
   profiles:
     active: local
+  application:
+    name: producer
+  kafka:
+    topic: library-events
+    template:
+      default-topic: library-events
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        acks: all
+        retries: 10
+        retry.backoff.ms: 1000
+server:
+  port: 8079
 ---
 spring:
+  application:
+    name: producer
   config:
     activate:
       on-profile: local
@@ -22,26 +39,37 @@ spring:
       properties:
         bootstrap.servers: localhost:9092,localhost:9093,localhost:9094
 ---
+
 spring:
   config:
     activate:
-      on-profile: nonprod
+      on-profile: docker
   kafka:
-    template:
-      default-topic: library-events
-    producer:
-      bootstrap-servers: localhost:9095,localhost:9096,localhost:9097
-      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      ssl:
-        trust-store-location: file:/System/Volumes/Data/Dilip/udemy/kafka-for-developers-using-spring-boot/ssl/client.truststore.jks
-        trust-store-password: password
-        key-store-location: file:/System/Volumes/Data/Dilip/udemy/kafka-for-developers-using-spring-boot/ssl/client.keystore.jks
-        key-store-password: password
+    bootstrap-servers: kafka1:19092
+    admin:
       properties:
-        acks: all
-        retries: 10
-        retry.backoff.ms: 1000
-        security:
-          protocol: SSL
-        ssl.endpoint.identification.algorithm:
+        bootstrap.servers: kafka1:19092
+
+#spring:
+#  config:
+#    activate:
+#      on-profile: nonprod
+#  kafka:
+#    template:
+#      default-topic: library-events
+#    producer:
+#      bootstrap-servers: localhost:9095,localhost:9096,localhost:9097
+#      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+#      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+#      ssl:
+#        trust-store-location: file:/System/Volumes/Data/Dilip/udemy/kafka-for-developers-using-spring-boot/ssl/client.truststore.jks
+#        trust-store-password: password
+#        key-store-location: file:/System/Volumes/Data/Dilip/udemy/kafka-for-developers-using-spring-boot/ssl/client.keystore.jks
+#        key-store-password: password
+#      properties:
+#        acks: all
+#        retries: 10
+#        retry.backoff.ms: 1000
+#        security:
+#          protocol: SSL
+#        ssl.endpoint.identification.algorithm:

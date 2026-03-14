@@ -33,21 +33,18 @@ public class LibraryEventsService {
         LibraryEvent libraryEvent = objectMapper.readValue(consumerRecord.value(), LibraryEvent.class);
         log.info("libraryEvent : {} ", libraryEvent);
 
-        if(libraryEvent.getLibraryEventId()!=null && ( libraryEvent.getLibraryEventId()==999 )){
+        if(libraryEvent.getLibraryEventId()!=null && libraryEvent.getLibraryEventId() == 999) {
             throw new RecoverableDataAccessException("Temporary Network Issue");
         }
 
         switch(libraryEvent.getLibraryEventType()){
-            case NEW:
-                save(libraryEvent);
-                break;
-            case UPDATE:
+            case NEW -> save(libraryEvent);
+            case UPDATE -> {
                 //validate the libraryevent
                 validate(libraryEvent);
                 save(libraryEvent);
-                break;
-            default:
-                log.info("Invalid Library Event Type");
+            }
+            default -> log.info("Invalid Library Event Type");
         }
 
     }
@@ -77,12 +74,10 @@ public class LibraryEventsService {
 
         var listenableFuture = kafkaTemplate.sendDefault(key, message);
         listenableFuture.whenComplete((sendResult, throwable) -> {
-            if (throwable != null) {
+            if (throwable != null)
                 handleFailure(key, message, throwable);
-            } else {
+            else
                 handleSuccess(key, message, sendResult);
-
-            }
         });
     }
 

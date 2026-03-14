@@ -123,7 +123,7 @@ public class LibraryEventsConsumerIntegrationTest {
 
         //when
         CountDownLatch latch = new CountDownLatch(1);
-        latch.await(3, TimeUnit.SECONDS);
+        System.out.println("kirieshki " + latch.await(3, TimeUnit.SECONDS));
 
         //then
         verify(libraryEventsConsumerSpy, times(1)).onMessage(isA(ConsumerRecord.class));
@@ -208,7 +208,7 @@ public class LibraryEventsConsumerIntegrationTest {
         kafkaTemplate.sendDefault(libraryEventId, json).get();
         //when
         CountDownLatch latch = new CountDownLatch(1);
-        latch.await(3, TimeUnit.SECONDS);
+        latch.await(12, TimeUnit.SECONDS);
 
 
         verify(libraryEventsConsumerSpy, times(1)).onMessage(isA(ConsumerRecord.class));
@@ -242,7 +242,7 @@ public class LibraryEventsConsumerIntegrationTest {
         kafkaTemplate.sendDefault(libraryEventId, json).get();
         //when
         CountDownLatch latch = new CountDownLatch(1);
-        latch.await(3, TimeUnit.SECONDS);
+        latch.await(12, TimeUnit.SECONDS);
 
 
         verify(libraryEventsConsumerSpy, times(3)).onMessage(isA(ConsumerRecord.class));
@@ -258,7 +258,7 @@ public class LibraryEventsConsumerIntegrationTest {
         kafkaTemplate.sendDefault(libraryEventId, json).get();
         //when
         CountDownLatch latch = new CountDownLatch(1);
-        latch.await(3, TimeUnit.SECONDS);
+        latch.await(12, TimeUnit.SECONDS);
 
         // Without Retry Listener
 //        verify(libraryEventsConsumerSpy, times(3)).onMessage(isA(ConsumerRecord.class));
@@ -293,7 +293,7 @@ public class LibraryEventsConsumerIntegrationTest {
         kafkaTemplate.sendDefault(libraryEventId, json).get();
         //when
         CountDownLatch latch = new CountDownLatch(1);
-        latch.await(5, TimeUnit.SECONDS);
+        latch.await(12, TimeUnit.SECONDS);
 
 
         verify(libraryEventsConsumerSpy, times(3)).onMessage(isA(ConsumerRecord.class));

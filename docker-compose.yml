@@ -31,3 +31,59 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
     depends_on:
       - zoo1
+
+  db:
+    image: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - pgdata-2:/var/lib/postgresql
+
+  pgadmin:
+      image: dpage/pgadmin4
+      environment:
+        PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+        PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      ports:
+        - "8081:80"
+      depends_on:
+        - db
+
+  producer:
+    build:
+      context: ./library-events-producer # Убедись, что путь совпадает с папкой проекта
+      dockerfile: Dockerfile
+    container_name: producer_app
+    ports:
+      - "8079:8079"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      - kafka1
+      - db
+
+  consumer:
+    build:
+      context: ./library-events-consumer
+      dockerfile: Dockerfile
+    container_name: consumer_app
+    ports:
+      - "8080:8080" # Поменяли порт, так как 8081 занят pgAdmin
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      - kafka1
+      - db
+
+volumes:
+  pgdata-2:

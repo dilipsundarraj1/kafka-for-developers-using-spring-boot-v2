@@ -93,7 +93,7 @@ public class LibraryEventsConsumerConfig {
         expBackOff.setMultiplier(2.0);
         expBackOff.setMaxInterval(2_000L);
 
-        var fixedBackOff = new FixedBackOff(1000L, 2L);
+        var fixedBackOff = new FixedBackOff(2000L, 2L);
 
         /**
          * Just the Custom Error Handler
