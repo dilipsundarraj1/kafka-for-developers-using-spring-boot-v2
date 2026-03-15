@@ -93,48 +93,86 @@ Deserialize the raw JSON string received in Step 1 into typed DTO objects. Valid
 ---
 
 ### Step 3: Domain Model + Repository + DB Persistence
-Path: `src/main/java/com/learnkafka/domain`, `src/main/java/com/learnkafka/repository`, `src/main/java/com/learnkafka/dto`, `src/main/resources/application.properties`
+Path: `src/main/java/com/learnkafka/domain`, `src/main/java/com/learnkafka/repository`, `src/main/java/com/learnkafka/dto`, `src/main/resources/application.yml`
 
 #### Goal
 Wire persistence end-to-end: map DTOs to JPA entities and save them to PostgreSQL. Initially handle only the `ADD` event type (simple insert).
 
 #### Pre-existing (from Layer 1)
-- `EventType` enum — ✅ already created
+- `LibraryEventType` enum (renamed from `EventType` to match producer payload) — ✅ already created
 - `Book` entity — ✅ already created
 - `LibraryEvent` entity — ✅ already created
 
 #### Modules
 - `LibraryEventRepository`
+- `BookRepository`
 - `LibraryEventMapper`
-- JPA/datasource configuration in `application.properties`
+- JPA/datasource configuration in `application.yml`
 
 #### Tasks
-1. Configure JPA/datasource properties in `application.properties`:
-   - `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password`
-   - `spring.jpa.hibernate.ddl-auto=update`
+1. Configure JPA/datasource properties in `application.yml`:
+   - `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password` (matching `compose.yaml` credentials)
+   - `spring.jpa.hibernate.ddl-auto=create` (use `create` on first run to generate correct IDENTITY columns, then switch to `update`)
    - `spring.jpa.show-sql=true` (development)
    - `spring.jpa.properties.hibernate.format_sql=true`
 2. Create `LibraryEventRepository extends JpaRepository<LibraryEvent, Integer>`.
-3. Create `LibraryEventMapper` utility class with:
+3. Create `BookRepository extends JpaRepository<Book, Integer>` — needed because `Book` has a producer-provided ID and must be saved explicitly before `LibraryEvent`.
+4. Create `LibraryEventMapper` utility class with:
    - `toEntity(LibraryEventDto dto)` → new `LibraryEvent` + `Book` entities.
    - `toBookEntity(BookDto dto)` → new `Book` entity.
-4. Update `LibraryEventService.processEvent()` to:
-   - Deserialize JSON to `LibraryEventDto` (already done in Step 2).
+   - **Do NOT set** `book.setLibraryEvent(libraryEvent)` in the mapper — the bidirectional back-reference must be set in the service after both entities are persisted.
+5. Update `LibraryEventService.processEvent()` to:
+   - Extract `LibraryEventDto` from `ConsumerRecord` (already deserialized by `JsonDeserializer`).
    - Map DTO → entity via `LibraryEventMapper.toEntity()`.
-   - Save entity via `LibraryEventRepository.save()`.
+   - Save `Book` first via `bookRepository.save()` (producer-provided ID, no `@GeneratedValue`).
+   - Set saved `Book` on `LibraryEvent`, then save via `libraryEventRepository.save()`.
+   - Set bidirectional back-reference (`savedBook.setLibraryEvent(savedEvent)`) after both are persisted.
    - Add `@Transactional` annotation.
-5. Verify cascade: saving `LibraryEvent` also persists `Book` (via `CascadeType.ALL`).
 6. Verify entity scan picks up `com.learnkafka.domain` package.
 
+#### Key Design Decisions (from error fixes)
+
+##### ID Generation Strategy
+- **`LibraryEvent.libraryEventId`**: `@Id @GeneratedValue(strategy = GenerationType.IDENTITY)` — producer sends `null` for `ADD` events; DB auto-generates the ID.
+- **`Book.bookId`**: `@Id @NotNull` — producer provides the `bookId` (e.g., `1`); no `@GeneratedValue`.
+
+##### Cascade Strategy
+- **`LibraryEvent.book`**: `@OneToOne(cascade = {CascadeType.MERGE, CascadeType.REMOVE})` — **not** `CascadeType.ALL`.
+- `CascadeType.PERSIST` is excluded because `Book` has a producer-provided (non-null) ID. Cascading `persist` from a new `LibraryEvent` to a `Book` with a non-null ID causes Hibernate to treat `Book` as a detached entity → `PersistentObjectException`.
+- `CascadeType.MERGE` is included for the `UPDATE` flow in Step 4.
+- `CascadeType.REMOVE` is included for cleanup.
+
+##### Save Order
+- `Book` must be saved **before** `LibraryEvent` because:
+  - `Book` has a manually-assigned ID → `JpaRepository.save()` calls `merge()`.
+  - `LibraryEvent` has `@GeneratedValue` with null ID → `JpaRepository.save()` calls `persist()`.
+  - If `Book` is saved via cascade persist from `LibraryEvent`, Hibernate sees a non-null ID on `Book` and rejects it as detached.
+
+##### Bidirectional Relationship
+- The `@OneToOne(mappedBy = "book")` back-reference on `Book.libraryEvent` must **not** be set in the mapper before persistence.
+- Setting it before save causes `TransientPropertyValueException` — Hibernate sees `Book` referencing an unsaved `LibraryEvent` at flush time.
+- Set the back-reference **after** both entities are saved: `savedBook.setLibraryEvent(savedEvent)`.
+
+##### DTO Field Name Mapping
+- Producer sends `libraryEventType` in JSON; DTO record component is also named `libraryEventType` (renamed from `eventType` to match producer).
+- If the DTO field name differs from the JSON key, use `@JsonProperty("libraryEventType")` on the record component.
+
+##### DDL Auto Strategy
+- Use `ddl-auto: create` on the first run to generate tables with correct IDENTITY columns.
+- `ddl-auto: update` does **not** alter existing columns to add IDENTITY generation or remove NOT NULL constraints from a prior schema.
+- After the first successful run, switch to `ddl-auto: update` to preserve data.
+
 #### Deliverables
-- End-to-end flow: Kafka message → DTO → Entity → PostgreSQL.
-- Repository interface for `LibraryEvent`.
-- Mapper with `toEntity()` method.
-- Working DB connectivity.
+- End-to-end flow: Kafka message → `JsonDeserializer` → `LibraryEventDto` → `LibraryEventMapper` → `Book` + `LibraryEvent` entities → PostgreSQL.
+- Repository interfaces for both `LibraryEvent` and `Book`.
+- Mapper with `toEntity()` and `toBookEntity()` methods (no bidirectional reference setup).
+- Working DB connectivity with correct schema.
 
 #### Acceptance Criteria
 - Sending an `ADD` event to `library-events` inserts both `LibraryEvent` and `Book` rows in PostgreSQL.
-- `LibraryEvent` and `Book` tables are auto-created on startup.
+- `LibraryEvent` table uses an auto-generated IDENTITY primary key.
+- `Book` table uses the producer-provided `bookId` as the primary key.
+- `LibraryEvent` and `Book` tables are created on startup.
 - App starts and connects to DB without errors.
 
 ---
@@ -281,13 +319,17 @@ Path: `src/test/java/com/learnkafka/repository`
 - [ ] Verify deserialization of valid JSON payloads
 
 ### Step 3: Domain Model + Repository + DB Save
-- [x] Create `EventType` enum ✅
-- [x] Create `Book` entity ✅
-- [x] Create `LibraryEvent` entity with `Book` relationship ✅
-- [ ] Configure JPA/datasource properties for PostgreSQL
-- [ ] Create `LibraryEventRepository`
-- [ ] Create `LibraryEventMapper` with `toEntity()` + `toBookEntity()`
-- [ ] Update service to map DTO → entity and save via repository
+- [x] Rename `EventType` enum → `LibraryEventType` (match producer payload) ✅
+- [x] Update `Book` entity — `@Id @NotNull` on `bookId`, no `@GeneratedValue` (producer-provided ID) ✅
+- [x] Update `LibraryEvent` entity — `@Id @GeneratedValue(IDENTITY)` on `libraryEventId` (DB-generated for ADD) ✅
+- [x] Update `LibraryEvent` cascade — `{CascadeType.MERGE, CascadeType.REMOVE}` instead of `CascadeType.ALL` ✅
+- [x] Configure JPA/datasource properties in `application.yml` (matching `compose.yaml` credentials) ✅
+- [x] Set `ddl-auto: create` for initial schema generation with IDENTITY columns ✅
+- [x] Create `LibraryEventRepository` ✅
+- [x] Create `BookRepository` (explicit `Book` save needed due to producer-provided ID) ✅
+- [x] Create `LibraryEventMapper` with `toEntity()` + `toBookEntity()` (no bidirectional ref in mapper) ✅
+- [x] Update `LibraryEventDto` — rename field to `libraryEventType` to match producer JSON ✅
+- [x] Update service: save `Book` first → save `LibraryEvent` → set back-reference after both persisted ✅
 - [ ] Verify `ADD` event persists `LibraryEvent` + `Book` in DB
 
 ### Step 4: Business Logic + Validation + Error Handling

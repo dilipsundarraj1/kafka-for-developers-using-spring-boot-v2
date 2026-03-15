@@ -4,6 +4,18 @@ server:
 spring:
   application:
     name: library-events-consumer
+  datasource:
+    url: jdbc:postgresql://localhost:5432/mydatabase
+    username: myuser
+    password: secret
+  jpa:
+    hibernate:
+      # Use 'create' on first run to recreate schema with IDENTITY columns, then switch back to 'update'
+      ddl-auto: create
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
   kafka:
     consumer:
       bootstrap-servers: localhost:9092

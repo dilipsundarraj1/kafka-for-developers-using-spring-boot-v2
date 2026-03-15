@@ -4,6 +4,8 @@ import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
@@ -13,14 +15,14 @@ import jakarta.validation.constraints.NotNull;
 public class LibraryEvent {
 
     @Id
-    @NotNull
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer libraryEventId;
 
     @Enumerated(EnumType.STRING)
     @NotNull
-    private EventType eventType;
+    private LibraryEventType eventType;
 
-    @OneToOne(cascade = CascadeType.ALL)
+    @OneToOne(cascade = {CascadeType.MERGE, CascadeType.REMOVE})
     @JoinColumn(name = "book_id")
     @NotNull
     private Book book;
@@ -28,7 +30,7 @@ public class LibraryEvent {
     public LibraryEvent() {
     }
 
-    public LibraryEvent(Integer libraryEventId, EventType eventType, Book book) {
+    public LibraryEvent(Integer libraryEventId, LibraryEventType eventType, Book book) {
         this.libraryEventId = libraryEventId;
         this.eventType = eventType;
         this.book = book;
@@ -42,11 +44,11 @@ public class LibraryEvent {
         this.libraryEventId = libraryEventId;
     }
 
-    public EventType getEventType() {
+    public LibraryEventType getEventType() {
         return eventType;
     }
 
-    public void setEventType(EventType eventType) {
+    public void setEventType(LibraryEventType eventType) {
         this.eventType = eventType;
     }
 
