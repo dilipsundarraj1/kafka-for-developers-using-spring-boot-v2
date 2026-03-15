@@ -33,14 +33,17 @@ public class LibraryEventService {
 
         LibraryEvent libraryEvent = LibraryEventMapper.toEntity(libraryEventDto);
 
-        // Save Book first — it has a producer-provided ID (no @GeneratedValue)
-        Book savedBook = bookRepository.save(libraryEvent.getBook());
-        libraryEvent.setBook(savedBook);
-
+        // Save LibraryEvent first — it has @GeneratedValue(IDENTITY), DB generates the ID
+        libraryEvent.setBook(null); // detach book temporarily to avoid cascade issues on persist
         LibraryEvent savedEvent = libraryEventRepository.save(libraryEvent);
 
-        // Set bidirectional back-reference after both are persisted
-        savedBook.setLibraryEvent(savedEvent);
+        // Now save Book with the FK pointing to the persisted LibraryEvent
+        Book book = LibraryEventMapper.toBookEntity(libraryEventDto.book());
+        book.setLibraryEvent(savedEvent);
+        Book savedBook = bookRepository.save(book);
+
+        // Set bidirectional back-reference for in-memory consistency
+        savedEvent.setBook(savedBook);
 
         log.info("Successfully persisted the library event : {}", savedEvent);
     }

@@ -124,9 +124,9 @@ Wire persistence end-to-end: map DTOs to JPA entities and save them to PostgreSQ
 5. Update `LibraryEventService.processEvent()` to:
    - Extract `LibraryEventDto` from `ConsumerRecord` (already deserialized by `JsonDeserializer`).
    - Map DTO → entity via `LibraryEventMapper.toEntity()`.
-   - Save `Book` first via `bookRepository.save()` (producer-provided ID, no `@GeneratedValue`).
-   - Set saved `Book` on `LibraryEvent`, then save via `libraryEventRepository.save()`.
-   - Set bidirectional back-reference (`savedBook.setLibraryEvent(savedEvent)`) after both are persisted.
+   - Save `LibraryEvent` first via `libraryEventRepository.save()` (DB generates the ID via `@GeneratedValue(IDENTITY)`).
+   - Create `Book` entity, set the FK (`book.setLibraryEvent(savedEvent)`), then save via `bookRepository.save()`.
+   - Set bidirectional back-reference (`savedEvent.setBook(savedBook)`) for in-memory consistency.
    - Add `@Transactional` annotation.
 6. Verify entity scan picks up `com.learnkafka.domain` package.
 
@@ -137,21 +137,22 @@ Wire persistence end-to-end: map DTOs to JPA entities and save them to PostgreSQ
 - **`Book.bookId`**: `@Id @NotNull` — producer provides the `bookId` (e.g., `1`); no `@GeneratedValue`.
 
 ##### Cascade Strategy
-- **`LibraryEvent.book`**: `@OneToOne(cascade = {CascadeType.MERGE, CascadeType.REMOVE})` — **not** `CascadeType.ALL`.
-- `CascadeType.PERSIST` is excluded because `Book` has a producer-provided (non-null) ID. Cascading `persist` from a new `LibraryEvent` to a `Book` with a non-null ID causes Hibernate to treat `Book` as a detached entity → `PersistentObjectException`.
-- `CascadeType.MERGE` is included for the `UPDATE` flow in Step 4.
-- `CascadeType.REMOVE` is included for cleanup.
+- **`LibraryEvent.book`**: `@OneToOne(mappedBy = "libraryEvent", cascade = {CascadeType.ALL})` — `LibraryEvent` is the **inverse side** (no `@JoinColumn`).
+- **`Book.libraryEvent`**: `@OneToOne @JoinColumn(name = "library_event_id")` — `Book` is the **owning side** (holds the FK).
+- `CascadeType.ALL` on `LibraryEvent` is now safe because `LibraryEvent` is saved first (gets its DB-generated ID), then `Book` is saved with the FK.
+- The FK column `library_event_id` lives in the `book` table.
 
 ##### Save Order
-- `Book` must be saved **before** `LibraryEvent` because:
-  - `Book` has a manually-assigned ID → `JpaRepository.save()` calls `merge()`.
-  - `LibraryEvent` has `@GeneratedValue` with null ID → `JpaRepository.save()` calls `persist()`.
-  - If `Book` is saved via cascade persist from `LibraryEvent`, Hibernate sees a non-null ID on `Book` and rejects it as detached.
+- `LibraryEvent` must be saved **before** `Book` because:
+  - `LibraryEvent` has `@GeneratedValue(IDENTITY)` with null ID → saved first to get the DB-generated ID.
+  - `Book` is the owning side with `@JoinColumn(name = "library_event_id")` → needs the `LibraryEvent` ID to write the FK.
+  - `Book` has a manually-assigned ID (`bookId`) → `JpaRepository.save()` calls `merge()`.
 
 ##### Bidirectional Relationship
-- The `@OneToOne(mappedBy = "book")` back-reference on `Book.libraryEvent` must **not** be set in the mapper before persistence.
-- Setting it before save causes `TransientPropertyValueException` — Hibernate sees `Book` referencing an unsaved `LibraryEvent` at flush time.
-- Set the back-reference **after** both entities are saved: `savedBook.setLibraryEvent(savedEvent)`.
+- `Book` is now the **owning side** with `@JoinColumn(name = "library_event_id")` — the FK lives in the `book` table.
+- `LibraryEvent` is the **inverse side** with `@OneToOne(mappedBy = "libraryEvent")`.
+- The owning side (`book.setLibraryEvent(savedEvent)`) must be set before saving `Book` — this is what writes the FK.
+- The inverse side (`savedEvent.setBook(savedBook)`) is set after both are saved for in-memory consistency only.
 
 ##### DTO Field Name Mapping
 - Producer sends `libraryEventType` in JSON; DTO record component is also named `libraryEventType` (renamed from `eventType` to match producer).
@@ -322,14 +323,15 @@ Path: `src/test/java/com/learnkafka/repository`
 - [x] Rename `EventType` enum → `LibraryEventType` (match producer payload) ✅
 - [x] Update `Book` entity — `@Id @NotNull` on `bookId`, no `@GeneratedValue` (producer-provided ID) ✅
 - [x] Update `LibraryEvent` entity — `@Id @GeneratedValue(IDENTITY)` on `libraryEventId` (DB-generated for ADD) ✅
-- [x] Update `LibraryEvent` cascade — `{CascadeType.MERGE, CascadeType.REMOVE}` instead of `CascadeType.ALL` ✅
+- [x] Update `LibraryEvent` — inverse side with `@OneToOne(mappedBy = "libraryEvent", cascade = ALL)` ✅
+- [x] Update `Book` — owning side with `@OneToOne @JoinColumn(name = "library_event_id")` ✅
 - [x] Configure JPA/datasource properties in `application.yml` (matching `compose.yaml` credentials) ✅
 - [x] Set `ddl-auto: create` for initial schema generation with IDENTITY columns ✅
 - [x] Create `LibraryEventRepository` ✅
 - [x] Create `BookRepository` (explicit `Book` save needed due to producer-provided ID) ✅
 - [x] Create `LibraryEventMapper` with `toEntity()` + `toBookEntity()` (no bidirectional ref in mapper) ✅
 - [x] Update `LibraryEventDto` — rename field to `libraryEventType` to match producer JSON ✅
-- [x] Update service: save `Book` first → save `LibraryEvent` → set back-reference after both persisted ✅
+- [x] Update service: save `LibraryEvent` first → save `Book` with FK → set back-reference ✅
 - [ ] Verify `ADD` event persists `LibraryEvent` + `Book` in DB
 
 ### Step 4: Business Logic + Validation + Error Handling

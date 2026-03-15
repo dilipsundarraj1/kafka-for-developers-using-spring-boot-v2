@@ -7,7 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
 import jakarta.validation.constraints.NotNull;
 
@@ -22,9 +21,7 @@ public class LibraryEvent {
     @NotNull
     private LibraryEventType eventType;
 
-    @OneToOne(cascade = {CascadeType.MERGE, CascadeType.REMOVE})
-    @JoinColumn(name = "book_id")
-    @NotNull
+    @OneToOne(mappedBy = "libraryEvent", cascade = {CascadeType.ALL})
     private Book book;
 
     public LibraryEvent() {

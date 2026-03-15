@@ -2,6 +2,7 @@ package com.learnkafka.domain;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -19,7 +20,8 @@ public class Book {
     @NotBlank
     private String bookAuthor;
 
-    @OneToOne(mappedBy = "book")
+    @OneToOne
+    @JoinColumn(name = "library_event_id")
     private LibraryEvent libraryEvent;
 
     public Book() {
