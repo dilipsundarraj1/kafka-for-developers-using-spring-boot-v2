@@ -117,15 +117,16 @@ Wire persistence end-to-end: map DTOs to JPA entities and save them to PostgreSQ
    - `spring.jpa.properties.hibernate.format_sql=true`
 2. Create `LibraryEventRepository extends JpaRepository<LibraryEvent, Integer>`.
 3. Create `BookRepository extends JpaRepository<Book, Integer>` — needed because `Book` has a producer-provided ID and must be saved explicitly before `LibraryEvent`.
-4. Create `LibraryEventMapper` utility class with:
-   - `toEntity(LibraryEventDto dto)` → new `LibraryEvent` + `Book` entities.
-   - `toBookEntity(BookDto dto)` → new `Book` entity.
+4. Create `LibraryEventMapper` utility class (private constructor, static methods only) with:
+   - `toEntity(LibraryEventDto dto)` → internally calls `toBookEntity(dto.book())` and passes the result into the `LibraryEvent(libraryEventId, libraryEventType, book)` constructor.
+   - `toBookEntity(BookDto dto)` → returns `new Book(bookId, bookName, bookAuthor)`.
    - **Do NOT set** `book.setLibraryEvent(libraryEvent)` in the mapper — the bidirectional back-reference must be set in the service after both entities are persisted.
 5. Update `LibraryEventService.processEvent()` to:
-   - Extract `LibraryEventDto` from `ConsumerRecord` (already deserialized by `JsonDeserializer`).
+   - Extract `LibraryEventDto` from `ConsumerRecord.value()` (already deserialized by `JsonDeserializer`).
    - Map DTO → entity via `LibraryEventMapper.toEntity()`.
+   - **Null out** `libraryEvent.setBook(null)` to detach the book temporarily and avoid cascade issues on persist.
    - Save `LibraryEvent` first via `libraryEventRepository.save()` (DB generates the ID via `@GeneratedValue(IDENTITY)`).
-   - Create `Book` entity, set the FK (`book.setLibraryEvent(savedEvent)`), then save via `bookRepository.save()`.
+   - Create a **fresh** `Book` entity from the DTO via `LibraryEventMapper.toBookEntity(libraryEventDto.book())`, set the FK (`book.setLibraryEvent(savedEvent)`), then save via `bookRepository.save()`.
    - Set bidirectional back-reference (`savedEvent.setBook(savedBook)`) for in-memory consistency.
    - Add `@Transactional` annotation.
 6. Verify entity scan picks up `com.learnkafka.domain` package.
