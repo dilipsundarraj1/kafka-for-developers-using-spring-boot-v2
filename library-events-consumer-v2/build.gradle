@@ -21,6 +21,12 @@ repositories {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-json'
+
+	//flyway
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-database-postgresql'
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+
 	// Kafka's JsonSerializer still requires classic Jackson 2.x (com.fasterxml.jackson) at runtime.
 	// Version must align with jackson-annotations:2.20 constrained by the Jackson 3.x BOM.
 	implementation 'com.fasterxml.jackson.core:jackson-databind:2.20.2'
@@ -38,6 +44,9 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
 	testImplementation 'org.testcontainers:testcontainers-postgresql'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	testImplementation 'org.springframework.boot:spring-boot-starter-flyway-test'
+
+
 }
 
 tasks.named('test') {

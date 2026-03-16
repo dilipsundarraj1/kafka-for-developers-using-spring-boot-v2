@@ -4,9 +4,13 @@ server:
 spring:
   application:
     name: library-events-consumer-test
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    clean-disabled: false
   jpa:
     hibernate:
-      ddl-auto: create
+      ddl-auto: none
     show-sql: true
     properties:
       hibernate:
@@ -22,5 +26,3 @@ spring:
         spring.json.trusted.packages: com.learnkafka.dto,com.learnkafka.domain
         spring.json.value.default.type: com.learnkafka.dto.LibraryEventDto
         spring.json.type.mapping: com.learnkafka.domain.LibraryEvent:com.learnkafka.dto.LibraryEventDto
-
-
