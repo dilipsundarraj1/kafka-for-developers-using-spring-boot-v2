@@ -48,5 +48,5 @@ Flyway migrations live in `src/main/resources/db/migration/`. JPA `ddl-auto` is 
 - **Logging** uses SLF4J (`LoggerFactory.getLogger`) — not `@Slf4j` annotation.
 - **Constructor injection** everywhere (no `@Autowired` on fields).
 - **Event types**: `LibraryEventType.ADD` and `LibraryEventType.UPDATE`. The DTO field is named `libraryEventType` while the entity field is `eventType`.
-- Design docs live in `docs/` — consult `PRD.md` for requirements and `IMPLEMENTATION_PLAN.md` for phased delivery context.
+- Design docs live in `docs/` — consult `1_PRD.md` for requirements and `2_IMPLEMENTATION_PLAN.md` for phased delivery context.
 
