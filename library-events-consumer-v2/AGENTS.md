@@ -1,3 +1,4 @@
+- Design docs live in `docs/` — consult `PRD.md` for requirements and `IMPLEMENTATION_PLAN.md` for phased delivery context.
 # AGENTS.md
 
 ## Project Overview
@@ -32,7 +33,8 @@ docker compose up -d     # start PostgreSQL for local dev (Kafka must be externa
 
 ## Testing Patterns
 
-- Integration tests use **Testcontainers** with `@SpringBootTest` + `@ImportTestcontainers`. A static `PostgreSQLContainer` with `@ServiceConnection` auto-configures the datasource — no manual URL wiring needed.
+- **Kafka service tests** bypass Kafka entirely: they construct `ConsumerRecord<Integer, LibraryEventDto>` directly and call `libraryEventService.processEvent()`. See `LibraryEventServiceIntegrationTest.buildConsumerRecord()`.
+- **REST controller tests** use **MockMvc** with `@AutoConfigureMockMvc` (import from `org.springframework.boot.webmvc.test.autoconfigure` — Spring Boot 4.0 package). JSON serialization uses Jackson 3 `tools.jackson.databind.ObjectMapper`. Assertions use `MockMvcResultMatchers` (`status()`, `jsonPath()`, `content()`). See `BookControllerIntegrationTest`.
 - Tests bypass Kafka entirely: they construct `ConsumerRecord<Integer, LibraryEventDto>` directly and call `libraryEventService.processEvent()`. See `LibraryEventServiceIntegrationTest.buildConsumerRecord()`.
 - `@BeforeEach` deletes `bookRepository` first, then `libraryEventRepository` (FK order matters).
 - Test `application.yml` sets `server.port: 0`, disables Flyway clean protection (`clean-disabled: false`), and keeps `ddl-auto: none` (Flyway owns schema).
@@ -47,6 +49,6 @@ Flyway migrations live in `src/main/resources/db/migration/`. JPA `ddl-auto` is 
 - **Audit columns** (`createdAt`, `updatedAt`) managed via JPA `@PrePersist`/`@PreUpdate` callbacks on each entity.
 - **Logging** uses SLF4J (`LoggerFactory.getLogger`) — not `@Slf4j` annotation.
 - **Constructor injection** everywhere (no `@Autowired` on fields).
-- **Event types**: `LibraryEventType.ADD` and `LibraryEventType.UPDATE`. The DTO field is named `libraryEventType` while the entity field is `eventType`.
 - Design docs live in `docs/` — consult `1_PRD.md` for requirements and `2_IMPLEMENTATION_PLAN.md` for phased delivery context.
+- Design docs live in `docs/` — consult `PRD.md` for requirements and `IMPLEMENTATION_PLAN.md` for phased delivery context.
 

@@ -16,6 +16,19 @@ public class LibraryEventMapper {
     public static Book toBookEntity(BookDto dto) {
         return new Book(dto.bookId(), dto.bookName(), dto.bookAuthor());
     }
-}
+
+    public static BookResponseDto toBookResponseDto(Book book) {
+        Integer libraryEventId = book.getLibraryEvent() != null
+                ? book.getLibraryEvent().getLibraryEventId()
+                : null;
+        return new BookResponseDto(
+                book.getBookId(),
+                book.getBookName(),
+                book.getBookAuthor(),
+                libraryEventId,
+                book.getCreatedAt(),
+                book.getUpdatedAt()
+        );
+    }
 
 
