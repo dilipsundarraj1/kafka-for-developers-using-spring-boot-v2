@@ -30,5 +30,6 @@ public class LibraryEventMapper {
                 book.getUpdatedAt()
         );
     }
+}
 
 
