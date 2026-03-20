@@ -19,6 +19,7 @@
 12. [Benefits Summary](#benefits-summary)
 13. [Common PRD Mistakes](#common-prd-mistakes)
 14. [Summary](#summary)
+15. [References](#references)
 
 ---
 
@@ -478,3 +479,9 @@ library-events-producer-v2/docs/3_IMPLEMENTATION_PLAN_README.md
 Everything in the codebase was derived from the PRD. Nothing was added that wasn't in the spec. Nothing was missed because it was captured in the spec before coding began.
 
 > *"Write the spec first. Let the code follow."*
+
+---
+
+## References
+
+- [Exploring Generative AI — Spec-Driven Development with AI Tools](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html) — Martin Fowler
