@@ -2,22 +2,61 @@
 
 ## Table of Contents
 
-1. [The Problem with Jumping Straight to Code](#the-problem-with-jumping-straight-to-code)
-2. [What is Spec-Driven Development?](#what-is-spec-driven-development)
-3. [What is a PRD?](#what-is-a-prd)
-4. [PRD Structure — The Template](#prd-structure--the-template)
-5. [Why Non-Goals Matter](#why-non-goals-matter)
-6. [The API Contract — Most Critical Section](#the-api-contract--most-critical-section)
-7. [Writing a PRD](#writing-a-prd)
-8. [PRD Output Walkthrough](#prd-output-walkthrough)
+1. [How Coding Agents Work](#how-coding-agents-work)
+2. [The Problem with Jumping Straight to Code](#the-problem-with-jumping-straight-to-code)
+3. [What is Spec-Driven Development?](#what-is-spec-driven-development)
+4. [What is a PRD?](#what-is-a-prd)
+5. [PRD Structure — The Template](#prd-structure--the-template)
+6. [Why Non-Goals Matter](#why-non-goals-matter)
+7. [The API Contract — Most Critical Section](#the-api-contract--most-critical-section)
+8. [Writing a PRD](#writing-a-prd)
+9. [PRD Output Walkthrough](#prd-output-walkthrough)
    - [Overview and Goals](#overview-and-goals)
    - [Functional Requirements](#functional-requirements)
    - [Error Handling](#error-handling)
-9. [From PRD to Implementation](#from-prd-to-implementation)
-10. [The PRD as a Living Document](#the-prd-as-a-living-document)
-11. [Benefits Summary](#benefits-summary)
-12. [Common PRD Mistakes](#common-prd-mistakes)
-13. [Summary](#summary)
+10. [From PRD to Implementation](#from-prd-to-implementation)
+11. [The PRD as a Living Document](#the-prd-as-a-living-document)
+12. [Benefits Summary](#benefits-summary)
+13. [Common PRD Mistakes](#common-prd-mistakes)
+14. [Summary](#summary)
+
+---
+
+## How Coding Agents Work
+
+A coding agent is an AI assistant that can read your codebase, write and edit files, run commands, and iteratively build software based on instructions you give it. Unlike a simple autocomplete tool, a coding agent operates in a loop — it takes a goal, breaks it into steps, executes each step, observes the result, and continues until the goal is met.
+
+```
+How a Coding Agent Operates:
+
+  You provide a goal (prompt or spec)
+           ↓
+  Agent reads relevant files & context
+           ↓
+  Agent plans the steps needed
+           ↓
+  Agent executes: writes files, edits code, runs commands
+           ↓
+  Agent observes the result (errors, output, test results)
+           ↓
+  Agent adjusts and continues until goal is complete
+           ↓
+  Done — agent reports back to you
+```
+
+The quality of the agent's output is **directly proportional to the quality of the input you give it.** A vague goal produces vague code. A precise, structured specification produces precise, correct code.
+
+This is why Spec-Driven Development is the ideal companion to coding agents. The spec gives the agent everything it needs to make the right decisions independently:
+
+| What the Spec Provides | How the Agent Uses It |
+|------------------------|----------------------|
+| API endpoints + response codes | Generates correct controller methods |
+| Validation rules | Generates correct annotations and validators |
+| Data model + schema | Generates correct entity classes and DB migrations |
+| Error handling strategies | Generates correct exception handlers |
+| Acceptance criteria | Generates meaningful test cases |
+
+Without a spec, the agent fills gaps with assumptions. With a spec, every decision has an explicit answer.
 
 ---
 
