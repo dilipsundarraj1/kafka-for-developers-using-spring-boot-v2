@@ -13,17 +13,14 @@
   - [3. Send with Callbacks](#3-send-with-callbacks)
   - [4. Send with Topic, Key, and Value](#4-send-with-topic-key-and-value)
 - [Message Sending Process](#message-sending-process)
-- [Deep Dive: What Happens inside KafkaTemplate.send()](#deep-dive-what-happens-inside-kafkatemplate-send)
-  - [Step-by-Step Execution Flow](#step-by-step-execution-flow)
-  - [1. Serialization Deep Dive](#1-serialization-deep-dive)
-  - [2. Partitioning Deep Dive](#2-partitioning-deep-dive)
-  - [3. Batching & Buffering Deep Dive](#3-batching--buffering-deep-dive)
-  - [4. Compression](#4-compression)
-  - [5. Idempotence & Message Ordering](#5-idempotence--message-ordering)
-  - [6. Acknowledgment Policies (Acks)](#6-acknowledgment-policies-acks)
-  - [7. Retry Mechanism](#7-retry-mechanism)
-  - [8. RecordMetadata](#8-recordmetadata)
-  - [9. Back Pressure & Flow Control](#9-back-pressure--flow-control)
+- [How Spring Kafka Auto-Configures the KafkaTemplate](#how-spring-kafka-auto-configures-the-kafkatemplate)
+  - [The application.yml — Where It All Starts](#the-applicationyml--where-it-all-starts)
+  - [Key Spring Kafka Classes Involved](#key-spring-kafka-classes-involved)
+  - [Step-by-Step Auto-Configuration Flow](#step-by-step-auto-configuration-flow)
+  - [Auto-Configuration Flow Diagram](#auto-configuration-flow-diagram)
+  - [How the Classes Wire Together — Mermaid Diagram](#how-the-classes-wire-together--mermaid-diagram)
+  - [What Happens If You Override the Auto-Configuration?](#what-happens-if-you-override-the-auto-configuration)
+  - [Quick Reference: Property → Class → Bean Mapping](#quick-reference-property--class--bean-mapping)
 - [Thread Model](#thread-model)
   - [Threading Model Diagram](#threading-model-diagram)
   - [Threading Model Flow Explanation](#threading-model-flow-explanation)
@@ -35,6 +32,17 @@
     - [Complete End-to-End Threading Flow](#complete-end-to-end-threading-flow)
     - [Thread Safety Guarantees](#thread-safety-guarantees)
     - [Performance Implications](#performance-implications)
+- [Deep Dive: What Happens inside KafkaTemplate.send()](#deep-dive-what-happens-inside-kafkatemplate-send)
+  - [Step-by-Step Execution Flow](#step-by-step-execution-flow)
+  - [1. Serialization Deep Dive](#1-serialization-deep-dive)
+  - [2. Partitioning Deep Dive](#2-partitioning-deep-dive)
+  - [3. Batching & Buffering Deep Dive](#3-batching--buffering-deep-dive)
+  - [4. Compression](#4-compression)
+  - [5. Idempotence & Message Ordering](#5-idempotence--message-ordering)
+  - [6. Acknowledgment Policies (Acks)](#6-acknowledgment-policies-acks)
+  - [7. Retry Mechanism](#7-retry-mechanism)
+  - [8. RecordMetadata](#8-recordmetadata)
+  - [9. Back Pressure & Flow Control](#9-back-pressure--flow-control)
 - [KafkaTemplate in Library Events Producer](#kafkatemplate-in-library-events-producer)
   - [Configuration](#configuration)
   - [Producer Implementation](#producer-implementation)
@@ -301,102 +309,691 @@ sequenceDiagram
 ```
 
 
+## How Spring Kafka Auto-Configures the KafkaTemplate
+
+Now that we've seen how messages flow through the `KafkaTemplate`, the natural question is: **how does Spring Boot create and configure the `KafkaTemplate` in the first place?** You never write `new KafkaTemplate(...)` yourself — Spring Boot's auto-configuration handles everything behind the scenes by reading your `application.yml`.
+
+### The application.yml — Where It All Starts
+
+In this project, the Kafka-related configuration lives across multiple YAML files:
+
+**`application.yml` (base config)**
+```yaml
+spring:
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+```
+
+**`application-dev.yml` (dev profile)**
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+```
+
+**`application-prod.yml` (prod profile)**
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: kafka.prod.com:9092
+```
+
+Spring Boot merges these files based on the active profile (`spring.profiles.active: dev`), producing an effective configuration like:
+
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+```
+
+### Key Spring Kafka Classes Involved
+
+Here are the main classes that participate in auto-configuring the `KafkaTemplate`, listed in the order they come into play:
+
+| #  | Class                            | Package / JAR                           | Role                                                                                     |
+|----|----------------------------------|-----------------------------------------|------------------------------------------------------------------------------------------|
+| 1  | `KafkaProperties`                | `spring-boot-autoconfigure`             | A `@ConfigurationProperties` class that **binds** all `spring.kafka.*` properties from YAML into a strongly-typed Java object. |
+| 2  | `KafkaAutoConfiguration`         | `spring-boot-autoconfigure`             | The **main auto-configuration class**. Annotated with `@ConditionalOnClass(KafkaTemplate.class)` — only activates when Spring Kafka is on the classpath. |
+| 3  | `DefaultKafkaProducerFactory`    | `spring-kafka`                          | The **ProducerFactory** implementation. Holds the producer configuration map and is responsible for creating `KafkaProducer` instances. |
+| 4  | `KafkaTemplate`                  | `spring-kafka`                          | The **high-level API** your code injects. Delegates to the `ProducerFactory` to obtain a `KafkaProducer` and send messages. |
+| 5  | `KafkaProducer`                  | `kafka-clients` (Apache Kafka)          | The **actual low-level Kafka client** that handles serialization, partitioning, batching, network I/O, and acknowledgments. |
+| 6  | `ProducerConfig`                 | `kafka-clients` (Apache Kafka)          | A constants class (`BOOTSTRAP_SERVERS_CONFIG`, `KEY_SERIALIZER_CLASS_CONFIG`, etc.) used as keys in the configuration map. |
+
+### Step-by-Step Auto-Configuration Flow
+
+Here is exactly what happens when your Spring Boot application starts:
+
+#### Step 1 — Classpath Scanning
+
+When you include `spring-boot-starter-kafka` in your `build.gradle`:
+
+```groovy
+implementation 'org.springframework.boot:spring-boot-starter'
+implementation 'org.springframework.kafka:spring-kafka'
+```
+
+Spring Boot detects `KafkaTemplate.class` on the classpath. This satisfies the `@ConditionalOnClass` condition on `KafkaAutoConfiguration`, so it activates.
+
+#### Step 2 — Property Binding via `KafkaProperties`
+
+`KafkaAutoConfiguration` is annotated with `@EnableConfigurationProperties(KafkaProperties.class)`, which tells Spring Boot to:
+
+1. Instantiate a `KafkaProperties` object.
+2. Bind every property under the `spring.kafka` prefix to it.
+
+```java
+@ConfigurationProperties(prefix = "spring.kafka")
+public class KafkaProperties {
+
+    private List<String> bootstrapServers;          // ← spring.kafka.bootstrap-servers
+
+    private final Producer producer = new Producer();
+
+    public static class Producer {
+        private Class<?> keySerializer;             // ← spring.kafka.producer.key-serializer
+        private Class<?> valueSerializer;           // ← spring.kafka.producer.value-serializer
+        private String acks;                        // ← spring.kafka.producer.acks
+        private Integer retries;                    // ← spring.kafka.producer.retries
+        // ... many more fields
+    }
+
+    /**
+     * Converts the bound properties into a flat Map<String, Object>
+     * that can be passed directly to the Kafka client.
+     */
+    public Map<String, Object> buildProducerProperties() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, this.bootstrapServers);
+        if (this.producer.keySerializer != null)
+            props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, this.producer.keySerializer);
+        if (this.producer.valueSerializer != null)
+            props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, this.producer.valueSerializer);
+        // ... remaining properties
+        return props;
+    }
+}
+```
+
+For **this project**, the resulting map looks like:
+
+```java
+{
+    "bootstrap.servers"  : "localhost:9092",
+    "key.serializer"     : "org.apache.kafka.common.serialization.IntegerSerializer",
+    "value.serializer"   : "org.springframework.kafka.support.serializer.JsonSerializer"
+}
+```
+
+#### Step 3 — `ProducerFactory` Bean Creation
+
+`KafkaAutoConfiguration` defines a `@Bean` method that creates a `DefaultKafkaProducerFactory` **only if** no other `ProducerFactory` bean exists (`@ConditionalOnMissingBean`):
+
+```java
+@Bean
+@ConditionalOnMissingBean(ProducerFactory.class)
+public DefaultKafkaProducerFactory<?, ?> kafkaProducerFactory(
+        KafkaProperties properties) {
+
+    // Convert YAML properties → Map<String, Object>
+    Map<String, Object> producerProps = properties.buildProducerProperties();
+
+    // Create the factory that will produce KafkaProducer instances
+    return new DefaultKafkaProducerFactory<>(producerProps);
+}
+```
+
+Internally, `DefaultKafkaProducerFactory` stores the config map and creates the actual Apache Kafka `KafkaProducer` lazily (on first `send()` call):
+
+```java
+public class DefaultKafkaProducerFactory<K, V> implements ProducerFactory<K, V> {
+
+    private final Map<String, Object> configs;
+
+    @Override
+    public Producer<K, V> createProducer() {
+        return new KafkaProducer<>(this.configs);   // ← Apache Kafka client
+    }
+}
+```
+
+#### Step 4 — `KafkaTemplate` Bean Creation
+
+Next, `KafkaAutoConfiguration` creates the `KafkaTemplate` bean, passing the `ProducerFactory` from Step 3:
+
+```java
+@Bean
+@ConditionalOnMissingBean(KafkaTemplate.class)
+public KafkaTemplate<?, ?> kafkaTemplate(
+        ProducerFactory<Object, Object> kafkaProducerFactory,
+        ProducerListener<Object, Object> kafkaProducerListener) {
+
+    KafkaTemplate<Object, Object> template =
+        new KafkaTemplate<>(kafkaProducerFactory);
+    template.setProducerListener(kafkaProducerListener);
+    return template;
+}
+```
+
+At this point, the `KafkaTemplate` bean is fully configured and sitting in the Spring application context.
+
+#### Step 5 — Dependency Injection into Your Code
+
+Spring injects the auto-configured `KafkaTemplate` wherever it's needed. In our project, that's `LibraryEventProducer`:
+
+```java
+@Component
+public class LibraryEventProducer {
+
+    private final KafkaTemplate<Integer, LibraryEvent> kafkaTemplate;
+    private final String topicName;
+
+    public LibraryEventProducer(
+            KafkaTemplate<Integer, LibraryEvent> kafkaTemplate,      // ← Auto-configured bean
+            @Value("${library.events.topic:library-events}") String topicName) {
+        this.kafkaTemplate = kafkaTemplate;
+        this.topicName = topicName;
+    }
+}
+```
+
+### Auto-Configuration Flow Diagram
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  application.yml  +  application-dev.yml  (merged by profile)     │
+│                                                                   │
+│  spring.kafka.bootstrap-servers = localhost:9092                   │
+│  spring.kafka.producer.key-serializer = IntegerSerializer         │
+│  spring.kafka.producer.value-serializer = JsonSerializer          │
+└──────────────────────────┬────────────────────────────────────────┘
+                           ↓
+┌───────────────────────────────────────────────────────────────────┐
+│  KafkaProperties  (@ConfigurationProperties)                      │
+│                                                                   │
+│  • Binds spring.kafka.* → strongly-typed fields                   │
+│  • buildProducerProperties() → Map<String, Object>                │
+└──────────────────────────┬────────────────────────────────────────┘
+                           ↓
+┌───────────────────────────────────────────────────────────────────┐
+│  KafkaAutoConfiguration  (@Configuration)                         │
+│                                                                   │
+│  @ConditionalOnClass(KafkaTemplate.class)  ← spring-kafka on CP  │
+│  @EnableConfigurationProperties(KafkaProperties.class)            │
+└────────────┬─────────────────────────────┬────────────────────────┘
+             ↓                             ↓
+┌─────────────────────────┐   ┌──────────────────────────────┐
+│  DefaultKafkaProducer-  │   │  KafkaTemplate               │
+│  Factory  @Bean         │──▶│  @Bean                       │
+│                         │   │                              │
+│  Holds producer config  │   │  High-level send() API       │
+│  Creates KafkaProducer  │   │  Delegates to ProducerFactory│
+└─────────────────────────┘   └──────────────┬───────────────┘
+                                             ↓
+┌───────────────────────────────────────────────────────────────────┐
+│  LibraryEventProducer        │
+│  (@Component)                │
+│                              │
+│  Injects KafkaTemplate via   │
+│  constructor injection       │
+└──────────────────────────────┘
+```
+
+### How the Classes Wire Together — Mermaid Diagram
+
+```mermaid
+flowchart TD
+    subgraph YAML["📄 Configuration Files"]
+        A1["application.yml<br/>key-serializer, value-serializer"]
+        A2["application-dev.yml<br/>bootstrap-servers: localhost:9092"]
+    end
+
+    subgraph SB["🟢 Spring Boot Auto-Configuration<br/>(spring-boot-autoconfigure JAR)"]
+        B["KafkaProperties<br/><i>@ConfigurationProperties(prefix=spring.kafka)</i><br/>Binds YAML → Java fields"]
+        C["KafkaAutoConfiguration<br/><i>@Configuration</i><br/><i>@ConditionalOnClass(KafkaTemplate.class)</i>"]
+    end
+
+    subgraph SK["🔵 Spring Kafka<br/>(spring-kafka JAR)"]
+        D["DefaultKafkaProducerFactory<br/><i>implements ProducerFactory</i><br/>Holds config map, creates producers"]
+        E["KafkaTemplate&lt;K, V&gt;<br/><i>implements KafkaOperations</i><br/>High-level send API"]
+    end
+
+    subgraph AK["🟠 Apache Kafka Client<br/>(kafka-clients JAR)"]
+        F["KafkaProducer&lt;K, V&gt;<br/>Serialization, partitioning,<br/>batching, network I/O"]
+        G["ProducerConfig<br/>Constants: BOOTSTRAP_SERVERS_CONFIG,<br/>KEY_SERIALIZER_CLASS_CONFIG, etc."]
+    end
+
+    subgraph APP["🟣 Your Application"]
+        H["LibraryEventProducer<br/><i>@Component</i><br/>Injects KafkaTemplate"]
+    end
+
+    A1 -->|"merged by profile"| B
+    A2 -->|"merged by profile"| B
+    B -->|"buildProducerProperties()"| C
+    G -.->|"keys used in config map"| B
+    C -->|"@Bean ProducerFactory"| D
+    C -->|"@Bean KafkaTemplate"| E
+    D -->|"passed to constructor"| E
+    D -->|"createProducer()"| F
+    E -->|"injected via DI"| H
+
+    style YAML fill:#fff3cd,stroke:#ffc107
+    style SB fill:#d4edda,stroke:#28a745
+    style SK fill:#cce5ff,stroke:#007bff
+    style AK fill:#ffe0cc,stroke:#fd7e14
+    style APP fill:#e8d5f5,stroke:#6f42c1
+```
+
+### What Happens If You Override the Auto-Configuration?
+
+Because every auto-configured bean is guarded by `@ConditionalOnMissingBean`, you can replace any part of the chain:
+
+| What You Define                        | What Auto-Config Skips                            |
+|----------------------------------------|---------------------------------------------------|
+| Your own `ProducerFactory` `@Bean`     | Auto-config **will not** create its `ProducerFactory` |
+| Your own `KafkaTemplate` `@Bean`       | Auto-config **will not** create its `KafkaTemplate`   |
+| Both                                   | Auto-config backs off entirely for the producer side  |
+
+**Example — Custom `ProducerFactory` with additional config:**
+
+```java
+@Configuration
+public class CustomKafkaConfig {
+
+    @Bean
+    public ProducerFactory<Integer, LibraryEvent> producerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        props.put(ProducerConfig.ACKS_CONFIG, "all");
+        props.put(ProducerConfig.RETRIES_CONFIG, 10);
+        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        return new DefaultKafkaProducerFactory<>(props);
+    }
+}
+```
+
+When Spring Boot sees that a `ProducerFactory` bean already exists, it skips its own factory creation but **still** creates the `KafkaTemplate` (using your factory) — because `KafkaTemplate` is still missing.
+
+### Quick Reference: Property → Class → Bean Mapping
+
+```
+application.yml property                   KafkaProperties field              ProducerConfig constant                    Final config map key
+─────────────────────────────────────────  ─────────────────────────────────  ─────────────────────────────────────────  ─────────────────────────
+spring.kafka.bootstrap-servers             bootstrapServers                   BOOTSTRAP_SERVERS_CONFIG                   "bootstrap.servers"
+spring.kafka.producer.key-serializer       producer.keySerializer             KEY_SERIALIZER_CLASS_CONFIG                "key.serializer"
+spring.kafka.producer.value-serializer     producer.valueSerializer           VALUE_SERIALIZER_CLASS_CONFIG              "value.serializer"
+spring.kafka.producer.acks                 producer.acks                      ACKS_CONFIG                                "acks"
+spring.kafka.producer.retries              producer.retries                   RETRIES_CONFIG                             "retries"
+spring.kafka.producer.batch-size           producer.batchSize                 BATCH_SIZE_CONFIG                          "batch.size"
+spring.kafka.producer.buffer-memory        producer.bufferMemory              BUFFER_MEMORY_CONFIG                       "buffer.memory"
+spring.kafka.producer.compression-type     producer.compressionType           COMPRESSION_TYPE_CONFIG                    "compression.type"
+spring.kafka.producer.properties.*         producer.properties                (passed through as-is)                     (property key as-is)
+```
+
+> 💡 **Key Takeaway:** You write human-friendly YAML → `KafkaProperties` binds it → `buildProducerProperties()` converts it to the flat `Map<String, Object>` that Apache Kafka's `KafkaProducer` expects → `DefaultKafkaProducerFactory` holds that map → `KafkaTemplate` uses the factory. The entire chain is created and wired automatically by `KafkaAutoConfiguration`.
+
+
+## Thread Model
+
+Understanding how KafkaTemplate handles concurrency and threading is crucial for building high-performance applications.
+
+### Threading Model Diagram
+
+```mermaid
+graph TB
+    subgraph AppThreads ["Application Threads"]
+        T1["Request Thread 1"]
+        T2["Request Thread 2"]
+        T3["Request Thread 3"]
+    end
+    
+    subgraph KafkaTemplate ["KafkaTemplate (Singleton, Thread-Safe)"]
+        KT["KafkaTemplate<br/>send() method"]
+    end
+    
+    subgraph ProducerThreads ["Kafka Producer Threads"]
+        MT["Main Thread<br/>(Serialization & Batching)"]
+        IOT["I/O Sender Thread<br/>(Network Operations)"]
+    end
+    
+    subgraph CallbackThreads ["Callback Executor"]
+        CB1["Callback Thread 1"]
+        CB2["Callback Thread 2"]
+    end
+    
+    T1 -->|Concurrent Calls| KT
+    T2 -->|Concurrent Calls| KT
+    T3 -->|Concurrent Calls| KT
+    
+    KT -->|Delegates| MT
+    MT -->|Enqueues| IOT
+    
+    IOT -->|Success| CB1
+    IOT -->|Failure| CB2
+    
+    CB1 -.Notifies.-> T1
+    CB2 -.Notifies.-> T2
+    
+    style T1 fill:#FFE4B5
+    style T2 fill:#FFE4B5
+    style T3 fill:#FFE4B5
+    style KT fill:#87CEEB
+    style MT fill:#98FB98
+    style IOT fill:#90EE90
+    style CB1 fill:#DDA0DD
+    style CB2 fill:#FFB6C1
+```
+
+### Threading Model Flow Explanation
+
+#### 1. Application Threads (Request Threads 1-3)
+
+**What they do:**
+- Multiple application threads (e.g., HTTP request handlers, service methods) can call `kafkaTemplate.send()` concurrently
+- Each thread has its own execution context and doesn't block other threads
+- No synchronization overhead at the application level
+
+**Example:**
+```java
+// Thread 1 (Handling Request A)
+kafkaTemplate.send("library-events", 1, eventA);
+
+// Thread 2 (Handling Request B) - Runs concurrently
+kafkaTemplate.send("library-events", 2, eventB);
+
+// Thread 3 (Handling Request C) - Runs concurrently
+kafkaTemplate.send("library-events", 3, eventC);
+
+// All three threads return immediately!
+```
+
+#### 2. KafkaTemplate (Singleton, Thread-Safe)
+
+**What it does:**
+- Acts as the central gateway for all send requests
+- Implements synchronization internally to handle concurrent calls safely
+- Uses locks/atomics to manage shared state without exposing it to the caller
+- Returns a `ListenableFuture` immediately without blocking
+
+**Thread-Safety Mechanism:**
+```java
+// Internally, KafkaTemplate uses synchronization
+public ListenableFuture<SendResult<K, V>> send(String topic, K key, V value) {
+    // Internal locking ensures thread-safety
+    // Application doesn't see the locking overhead
+    synchronized(producer) {
+        // Prepare message
+        // Add to queue
+    }
+    // Return immediately
+    return future;
+}
+```
+
+**Key Characteristic:**
+- **Single Instance Shared Across Threads**: Only one KafkaTemplate bean exists (singleton pattern)
+- **No Need for Thread-Local Storage**: All threads use the same instance
+- **Efficient Resource Usage**: Avoids creating multiple producer instances
+
+#### 3. Main Thread (Serialization & Batching)
+
+**What it does:**
+- Runs in the background as part of the Kafka producer's thread pool
+- Receives serialization and batching tasks from KafkaTemplate
+- Performs CPU-intensive operations (serialization, compression)
+- Accumulates messages into batches
+
+**Operations Performed:**
+```
+Main Thread Responsibilities:
+
+Input: ProducerRecord objects
+    ↓
+Step 1: Serialize key
+    - Convert Integer key to bytes
+    - Example: 1 → [0, 0, 0, 1]
+    ↓
+Step 2: Serialize value
+    - Convert LibraryEvent to JSON
+    - Convert JSON string to UTF-8 bytes
+    ↓
+Step 3: Apply compression (if enabled)
+    - Compress serialized bytes
+    - Add compression codec header
+    ↓
+Step 4: Batch accumulation
+    - Check if batch is full (batch-size)
+    - Check if timeout reached (linger-ms)
+    - If condition met, enqueue for I/O thread
+    ↓
+Output: Batched, serialized, compressed messages
+```
+
+**Example Timeline:**
+```
+T=0ms:   Thread A sends message 1 → Main thread serializes
+T=1ms:   Thread B sends message 2 → Main thread serializes
+T=2ms:   Thread C sends message 3 → Main thread serializes
+T=10ms:  Batch size = 12KB (not full), but linger-ms timeout reached
+         → Main thread enqueues batch to I/O thread
+```
+
+#### 4. I/O Sender Thread (Network Operations)
+
+**What it does:**
+- Handles all network communication with Kafka brokers
+- Runs asynchronously to avoid blocking application threads
+- Manages TCP connections to brokers
+- Implements retry logic for failed sends
+
+**Network Operations:**
+```
+I/O Thread Responsibilities:
+
+Input: Batched messages from Main thread
+    ↓
+Step 1: Get broker metadata
+    - Which broker is the partition leader?
+    - Is connection pool available?
+    ↓
+Step 2: Establish/reuse TCP connection
+    - Connect to broker if not already connected
+    - Maintain connection pool
+    ↓
+Step 3: Send network request
+    - Send batched messages over TCP
+    - Apply request timeout (request.timeout.ms)
+    ↓
+Step 4: Wait for broker response
+    - Broker processes and writes to log
+    - Broker replicates to followers (if configured)
+    - Broker sends ACK with metadata
+    ↓
+Step 5: Handle response
+    - Extract offset, partition, timestamp
+    - Create RecordMetadata
+    - Determine success or failure
+    ↓
+Output: Callback to be executed
+```
+
+**Example Network Flow:**
+```
+I/O Thread Timeline:
+
+T=0ms:   Batch of 3 messages enqueued
+T=5ms:   Connected to Broker 1 (Leader for partition 0)
+T=10ms:  Sent 3 messages over network (TCP)
+T=15ms:  Broker 1 received messages
+T=20ms:  Broker 1 wrote to log
+T=25ms:  Broker 1 replicated to Broker 2
+T=30ms:  Broker 1 replicated to Broker 3
+T=35ms:  All replicas acknowledged
+T=40ms:  Broker 1 sends ACK to producer
+         - offset: 1234
+         - partition: 0
+         - timestamp: 1645980000000
+T=45ms:  ACK received, callback executor notified
+```
+
+#### 5. Callback Executor (Success/Failure Threads)
+
+**What it does:**
+- Executes success and failure callbacks registered via `addCallback()`
+- Runs in separate thread pools to avoid blocking I/O threads
+- Notifies application code of send results
+- Allows custom error handling and retries
+
+**Callback Execution Flow:**
+```
+Success Callback Path:
+    I/O Thread receives ACK
+        ↓
+    Creates RecordMetadata
+        ↓
+    Enqueues success callback to executor
+        ↓
+    Callback Thread 1 executes onSuccess()
+        ↓
+    User code handles success
+        └─→ Log, update metrics, store offset, etc.
+
+Failure Callback Path:
+    I/O Thread receives error from broker
+        ↓
+    Extracts error details (timeout, broker error, etc.)
+        ↓
+    Enqueues failure callback to executor
+        ↓
+    Callback Thread 2 executes onFailure()
+        ↓
+    User code handles failure
+        └─→ Log error, alert, retry, circuit-break, etc.
+```
+
+**Example Callback Execution:**
+```java
+kafkaTemplate.send("library-events", 1, event)
+    .addCallback(
+        result -> {
+            // This runs in Callback Thread 1 when message succeeds
+            log.info("Message published at offset: {}", 
+                result.getRecordMetadata().offset());
+        },
+        ex -> {
+            // This runs in Callback Thread 2 when message fails
+            log.error("Failed to publish message", ex);
+            // Could implement retry logic here
+        }
+    );
+
+// Application continues immediately
+// Callback executes later in background
+```
+
+### Complete End-to-End Threading Flow
+
+```
+Time    Application Thread    Main Thread           I/O Thread        Callback Thread
+────────────────────────────────────────────────────────────────────────────────────
+T=0ms   │ send() called      │                      │                 │
+        ├─ Returns immediately with ListenableFuture
+        │                    │
+T=1ms   │ Continue processing (non-blocking!)
+        │                    │ Serialize message 1  │                 │
+        │                    ├─ Add to batch        │                 │
+        │                    │                      │                 │
+T=5ms   │ send() called      │ Serialize message 2  │                 │
+        ├─ Returns immediately with ListenableFuture
+        │ Continue processing (non-blocking!)
+        │                    ├─ Add to batch        │                 │
+        │                    │ Check batch size     │                 │
+        │                    │                      │                 │
+T=10ms  │ send() called      │ Batch not full       │                 │
+        ├─ Returns immediately with ListenableFuture
+        │ Continue processing (non-blocking!)
+        │                    ├─ Timeout reached     │                 │
+        │                    ├─ Flush batch ────────┤                 │
+        │                    │                      ├─ Send to broker │
+        │                    │                      │                 │
+T=50ms  │                    │                      ├─ Receive ACK    │
+        │                    │                      ├─ Enqueue ──────────┤
+        │                    │                      │                 ├─ onSuccess()
+        │                    │                      │                 │ called
+        │                    │                      │                 │
+```
+
+**Key Observations:**
+
+1. **Non-Blocking**: Application thread never waits for broker response
+2. **Concurrent**: Multiple application threads can send simultaneously
+3. **Asynchronous**: All heavy lifting happens in background threads
+4. **Efficient**: Batching reduces network overhead
+5. **Responsive**: User code continues executing while Kafka operations complete
+
+### Thread Safety Guarantees
+
+| Guarantee | How It's Ensured |
+|-----------|------------------|
+| **Thread-Safe send()** | Internal synchronization in KafkaTemplate |
+| **Concurrent access** | Lock-free data structures for message batching |
+| **No race conditions** | Atomic operations on offsets and metadata |
+| **Safe callbacks** | Callback executor uses thread pools |
+| **Memory visibility** | Volatile fields and happens-before relationships |
+
+### Performance Implications
+
+```yaml
+# Threading Configuration (in application.yml)
+spring:
+  kafka:
+    producer:
+      # Controls batching (affects Main thread workload)
+      batch-size: 16384           # 16 KB
+      linger-ms: 10               # 10 ms
+      
+      # Controls I/O thread behavior
+      compression-type: snappy    # Reduces network I/O
+      
+      # Total memory for buffering across all threads
+      buffer-memory: 33554432     # 32 MB
+      
+      properties:
+        # I/O thread timeout
+        request.timeout.ms: 30000
+        
+        # Affects retry behavior in I/O thread
+        retry.backoff.ms: 100
+```
+
 ## Deep Dive: What Happens inside KafkaTemplate.send()
 
 When you call `kafkaTemplate.send(topic, key, value)`, a complex sequence of operations occurs behind the scenes. Understanding this process is crucial for optimizing performance and debugging issues.
 
 ### Step-by-Step Execution Flow
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Application calls: kafkaTemplate.send("library-events", 1, event)
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. INTERCEPT & VALIDATE
-│    - Check if topic exists in metadata
-│    - Validate topic name format
-│    - Check if message is null
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. SERIALIZATION
-│    ├─ Key Serialization: Integer → bytes
-│    │   Input: 1 (Integer)
-│    │   Process: IntegerSerializer.serialize()
-│    │   Output: [0, 0, 0, 1] (4 bytes)
-│    │
-│    └─ Value Serialization: LibraryEvent → JSON → bytes
-│        Input: LibraryEvent object
-│        Process: JsonSerializer.serialize()
-│        Output: {"libraryEventId":1,...} → bytes
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. PARTITIONING
-│    - Determine target partition using partition assignment
-│    - Key-based partitioning: hash(key) % num_partitions
-│    - Result: Partition 0 (in single partition topic)
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. COMPRESSION (if enabled)
-│    - Apply compression codec (snappy/lz4/gzip/zstd)
-│    - Compress serialized bytes
-│    - Store compression type in message header
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 5. RECORD METADATA & HEADERS
-│    - Attach timestamp (current time)
-│    - Assign sequence number
-│    - Add custom headers (if any)
-│    - Create ProducerRecord object
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 6. BATCHING & BUFFERING
-│    - Add to accumulated batch for topic-partition
-│    - Check if batch is full (batch-size)
-│    - Check if time limit reached (linger-ms)
-│    - If either condition met → flush batch
-│    - Otherwise → wait for more messages
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 7. BROKER METADATA CHECK
-│    - Verify broker connection is healthy
-│    - Get metadata for partition leader
-│    - Determine which broker to send to
-│    - Maintain broker connection pool
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 8. SEND TO BROKER
-│    - Create network request with batched messages
-│    - Use producer I/O thread to send asynchronously
-│    - Apply timeout (request.timeout.ms)
-│    - Handle backpressure if broker is slow
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 9. BROKER PROCESSING
-│    - Broker receives messages
-│    - Validates message format
-│    - Writes to log file (persists to disk)
-│    - Replicates to follower brokers (if configured)
-│    - Applies acks policy
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 10. ACKNOWLEDGMENT & CALLBACK
-│    - Broker sends back acknowledgment
-│    - Callback executor invokes success/error handler
-│    - Return ListenableFuture with metadata
-│    - Application receives: topic, partition, offset
-└────────────┬────────────────────────────────────────────────────┘
-             ↓
-Return to Application
+```mermaid
+flowchart TB
+    A["Application calls:<br/>kafkaTemplate.send('library-events', 1, event)"]
+    S1["1. INTERCEPT & VALIDATE<br/>- Check if topic exists in metadata<br/>- Validate topic name format<br/>- Check if message is null"]
+    S2["2. SERIALIZATION<br/>- Key Serialization: Integer -> bytes<br/>- Input: 1 (Integer)<br/>- Process: IntegerSerializer.serialize()<br/>- Output: [0, 0, 0, 1] (4 bytes)<br/>- Value Serialization: LibraryEvent -> JSON -> bytes<br/>- Input: LibraryEvent object<br/>- Process: JsonSerializer.serialize()<br/>- Output: {libraryEventId:1,...} -> bytes"]
+    S3["3. PARTITIONING<br/>- Determine target partition using partition assignment<br/>- Key-based partitioning: hash(key) % num_partitions<br/>- Result: Partition 0 (in single partition topic)"]
+    S4["4. COMPRESSION (if enabled)<br/>- Apply compression codec (snappy/lz4/gzip/zstd)<br/>- Compress serialized bytes<br/>- Store compression type in message header"]
+    S5["5. RECORD METADATA & HEADERS<br/>- Attach timestamp (current time)<br/>- Assign sequence number<br/>- Add custom headers (if any)<br/>- Create ProducerRecord object"]
+    S6["6. BATCHING & BUFFERING<br/>- Add to accumulated batch for topic-partition<br/>- Check if batch is full (batch-size)<br/>- Check if time limit reached (linger-ms)<br/>- If either condition met -> flush batch<br/>- Otherwise -> wait for more messages"]
+    S7["7. BROKER METADATA CHECK<br/>- Verify broker connection is healthy<br/>- Get metadata for partition leader<br/>- Determine which broker to send to<br/>- Maintain broker connection pool"]
+    S8["8. SEND TO BROKER<br/>- Create network request with batched messages<br/>- Use producer I/O thread to send asynchronously<br/>- Apply timeout (request.timeout.ms)<br/>- Handle backpressure if broker is slow"]
+    S9["9. BROKER PROCESSING<br/>- Broker receives messages<br/>- Validates message format<br/>- Writes to log file (persists to disk)<br/>- Replicates to follower brokers (if configured)<br/>- Applies acks policy"]
+    S10["10. ACKNOWLEDGMENT & CALLBACK<br/>- Broker sends back acknowledgment<br/>- Callback executor invokes success/error handler<br/>- Return ListenableFuture with metadata<br/>- Application receives: topic, partition, offset"]
+    R["Return to Application"]
+
+    A --> S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9 --> S10 --> R
 ```
 
 ### 1. Serialization Deep Dive
@@ -930,339 +1527,6 @@ Timeout:
   If broker too slow, send() throws exception after max.block.ms
 ```
 
-## Thread Model
-
-Understanding how KafkaTemplate handles concurrency and threading is crucial for building high-performance applications.
-
-### Threading Model Diagram
-
-```mermaid
-graph TB
-    subgraph AppThreads ["Application Threads"]
-        T1["Request Thread 1"]
-        T2["Request Thread 2"]
-        T3["Request Thread 3"]
-    end
-    
-    subgraph KafkaTemplate ["KafkaTemplate (Singleton, Thread-Safe)"]
-        KT["KafkaTemplate<br/>send() method"]
-    end
-    
-    subgraph ProducerThreads ["Kafka Producer Threads"]
-        MT["Main Thread<br/>(Serialization & Batching)"]
-        IOT["I/O Sender Thread<br/>(Network Operations)"]
-    end
-    
-    subgraph CallbackThreads ["Callback Executor"]
-        CB1["Callback Thread 1"]
-        CB2["Callback Thread 2"]
-    end
-    
-    T1 -->|Concurrent Calls| KT
-    T2 -->|Concurrent Calls| KT
-    T3 -->|Concurrent Calls| KT
-    
-    KT -->|Delegates| MT
-    MT -->|Enqueues| IOT
-    
-    IOT -->|Success| CB1
-    IOT -->|Failure| CB2
-    
-    CB1 -.Notifies.-> T1
-    CB2 -.Notifies.-> T2
-    
-    style T1 fill:#FFE4B5
-    style T2 fill:#FFE4B5
-    style T3 fill:#FFE4B5
-    style KT fill:#87CEEB
-    style MT fill:#98FB98
-    style IOT fill:#90EE90
-    style CB1 fill:#DDA0DD
-    style CB2 fill:#FFB6C1
-```
-
-### Threading Model Flow Explanation
-
-#### 1. Application Threads (Request Threads 1-3)
-
-**What they do:**
-- Multiple application threads (e.g., HTTP request handlers, service methods) can call `kafkaTemplate.send()` concurrently
-- Each thread has its own execution context and doesn't block other threads
-- No synchronization overhead at the application level
-
-**Example:**
-```java
-// Thread 1 (Handling Request A)
-kafkaTemplate.send("library-events", 1, eventA);
-
-// Thread 2 (Handling Request B) - Runs concurrently
-kafkaTemplate.send("library-events", 2, eventB);
-
-// Thread 3 (Handling Request C) - Runs concurrently
-kafkaTemplate.send("library-events", 3, eventC);
-
-// All three threads return immediately!
-```
-
-#### 2. KafkaTemplate (Singleton, Thread-Safe)
-
-**What it does:**
-- Acts as the central gateway for all send requests
-- Implements synchronization internally to handle concurrent calls safely
-- Uses locks/atomics to manage shared state without exposing it to the caller
-- Returns a `ListenableFuture` immediately without blocking
-
-**Thread-Safety Mechanism:**
-```java
-// Internally, KafkaTemplate uses synchronization
-public ListenableFuture<SendResult<K, V>> send(String topic, K key, V value) {
-    // Internal locking ensures thread-safety
-    // Application doesn't see the locking overhead
-    synchronized(producer) {
-        // Prepare message
-        // Add to queue
-    }
-    // Return immediately
-    return future;
-}
-```
-
-**Key Characteristic:**
-- **Single Instance Shared Across Threads**: Only one KafkaTemplate bean exists (singleton pattern)
-- **No Need for Thread-Local Storage**: All threads use the same instance
-- **Efficient Resource Usage**: Avoids creating multiple producer instances
-
-#### 3. Main Thread (Serialization & Batching)
-
-**What it does:**
-- Runs in the background as part of the Kafka producer's thread pool
-- Receives serialization and batching tasks from KafkaTemplate
-- Performs CPU-intensive operations (serialization, compression)
-- Accumulates messages into batches
-
-**Operations Performed:**
-```
-Main Thread Responsibilities:
-
-Input: ProducerRecord objects
-    ↓
-Step 1: Serialize key
-    - Convert Integer key to bytes
-    - Example: 1 → [0, 0, 0, 1]
-    ↓
-Step 2: Serialize value
-    - Convert LibraryEvent to JSON
-    - Convert JSON string to UTF-8 bytes
-    ↓
-Step 3: Apply compression (if enabled)
-    - Compress serialized bytes
-    - Add compression codec header
-    ↓
-Step 4: Batch accumulation
-    - Check if batch is full (batch-size)
-    - Check if timeout reached (linger-ms)
-    - If condition met, enqueue for I/O thread
-    ↓
-Output: Batched, serialized, compressed messages
-```
-
-**Example Timeline:**
-```
-T=0ms:   Thread A sends message 1 → Main thread serializes
-T=1ms:   Thread B sends message 2 → Main thread serializes
-T=2ms:   Thread C sends message 3 → Main thread serializes
-T=10ms:  Batch size = 12KB (not full), but linger-ms timeout reached
-         → Main thread enqueues batch to I/O thread
-```
-
-#### 4. I/O Sender Thread (Network Operations)
-
-**What it does:**
-- Handles all network communication with Kafka brokers
-- Runs asynchronously to avoid blocking application threads
-- Manages TCP connections to brokers
-- Implements retry logic for failed sends
-
-**Network Operations:**
-```
-I/O Thread Responsibilities:
-
-Input: Batched messages from Main thread
-    ↓
-Step 1: Get broker metadata
-    - Which broker is the partition leader?
-    - Is connection pool available?
-    ↓
-Step 2: Establish/reuse TCP connection
-    - Connect to broker if not already connected
-    - Maintain connection pool
-    ↓
-Step 3: Send network request
-    - Send batched messages over TCP
-    - Apply request timeout (request.timeout.ms)
-    ↓
-Step 4: Wait for broker response
-    - Broker processes and writes to log
-    - Broker replicates to followers (if configured)
-    - Broker sends ACK with metadata
-    ↓
-Step 5: Handle response
-    - Extract offset, partition, timestamp
-    - Create RecordMetadata
-    - Determine success or failure
-    ↓
-Output: Callback to be executed
-```
-
-**Example Network Flow:**
-```
-I/O Thread Timeline:
-
-T=0ms:   Batch of 3 messages enqueued
-T=5ms:   Connected to Broker 1 (Leader for partition 0)
-T=10ms:  Sent 3 messages over network (TCP)
-T=15ms:  Broker 1 received messages
-T=20ms:  Broker 1 wrote to log
-T=25ms:  Broker 1 replicated to Broker 2
-T=30ms:  Broker 1 replicated to Broker 3
-T=35ms:  All replicas acknowledged
-T=40ms:  Broker 1 sends ACK to producer
-         - offset: 1234
-         - partition: 0
-         - timestamp: 1645980000000
-T=45ms:  ACK received, callback executor notified
-```
-
-#### 5. Callback Executor (Success/Failure Threads)
-
-**What it does:**
-- Executes success and failure callbacks registered via `addCallback()`
-- Runs in separate thread pools to avoid blocking I/O threads
-- Notifies application code of send results
-- Allows custom error handling and retries
-
-**Callback Execution Flow:**
-```
-Success Callback Path:
-    I/O Thread receives ACK
-        ↓
-    Creates RecordMetadata
-        ↓
-    Enqueues success callback to executor
-        ↓
-    Callback Thread 1 executes onSuccess()
-        ↓
-    User code handles success
-        └─→ Log, update metrics, store offset, etc.
-
-Failure Callback Path:
-    I/O Thread receives error from broker
-        ↓
-    Extracts error details (timeout, broker error, etc.)
-        ↓
-    Enqueues failure callback to executor
-        ↓
-    Callback Thread 2 executes onFailure()
-        ↓
-    User code handles failure
-        └─→ Log error, alert, retry, circuit-break, etc.
-```
-
-**Example Callback Execution:**
-```java
-kafkaTemplate.send("library-events", 1, event)
-    .addCallback(
-        result -> {
-            // This runs in Callback Thread 1 when message succeeds
-            log.info("Message published at offset: {}", 
-                result.getRecordMetadata().offset());
-        },
-        ex -> {
-            // This runs in Callback Thread 2 when message fails
-            log.error("Failed to publish message", ex);
-            // Could implement retry logic here
-        }
-    );
-
-// Application continues immediately
-// Callback executes later in background
-```
-
-### Complete End-to-End Threading Flow
-
-```
-Time    Application Thread    Main Thread           I/O Thread        Callback Thread
-────────────────────────────────────────────────────────────────────────────────────
-T=0ms   │ send() called      │                      │                 │
-        ├─ Returns immediately with ListenableFuture
-        │                    │
-T=1ms   │ Continue processing (non-blocking!)
-        │                    │ Serialize message 1  │                 │
-        │                    ├─ Add to batch        │                 │
-        │                    │                      │                 │
-T=5ms   │ send() called      │ Serialize message 2  │                 │
-        ├─ Returns immediately with ListenableFuture
-        │ Continue processing (non-blocking!)
-        │                    ├─ Add to batch        │                 │
-        │                    │ Check batch size     │                 │
-        │                    │                      │                 │
-T=10ms  │ send() called      │ Batch not full       │                 │
-        ├─ Returns immediately with ListenableFuture
-        │ Continue processing (non-blocking!)
-        │                    ├─ Timeout reached     │                 │
-        │                    ├─ Flush batch ────────┤                 │
-        │                    │                      ├─ Send to broker │
-        │                    │                      │                 │
-T=50ms  │                    │                      ├─ Receive ACK    │
-        │                    │                      ├─ Enqueue ──────────┤
-        │                    │                      │                 ├─ onSuccess()
-        │                    │                      │                 │ called
-        │                    │                      │                 │
-```
-
-**Key Observations:**
-
-1. **Non-Blocking**: Application thread never waits for broker response
-2. **Concurrent**: Multiple application threads can send simultaneously
-3. **Asynchronous**: All heavy lifting happens in background threads
-4. **Efficient**: Batching reduces network overhead
-5. **Responsive**: User code continues executing while Kafka operations complete
-
-### Thread Safety Guarantees
-
-| Guarantee | How It's Ensured |
-|-----------|------------------|
-| **Thread-Safe send()** | Internal synchronization in KafkaTemplate |
-| **Concurrent access** | Lock-free data structures for message batching |
-| **No race conditions** | Atomic operations on offsets and metadata |
-| **Safe callbacks** | Callback executor uses thread pools |
-| **Memory visibility** | Volatile fields and happens-before relationships |
-
-### Performance Implications
-
-```yaml
-# Threading Configuration (in application.yml)
-spring:
-  kafka:
-    producer:
-      # Controls batching (affects Main thread workload)
-      batch-size: 16384           # 16 KB
-      linger-ms: 10               # 10 ms
-      
-      # Controls I/O thread behavior
-      compression-type: snappy    # Reduces network I/O
-      
-      # Total memory for buffering across all threads
-      buffer-memory: 33554432     # 32 MB
-      
-      properties:
-        # I/O thread timeout
-        request.timeout.ms: 30000
-        
-        # Affects retry behavior in I/O thread
-        retry.backoff.ms: 100
-```
-
 ## KafkaTemplate in Library Events Producer
 
 ### Configuration
@@ -1621,20 +1885,20 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    A["Message arrives<br/>Key: 5<br/>Topic: library-events"] -->|Hash Function| B["hash5 = 45678"]
+    A["Message arrives<br/>(key: 5, topic: library-events)"] -->|Hash Function| B["hash5 = 45678"]
     B -->|Modulo Operation| C["45678 % 3 partitions"]
     C -->|Result| D["45678 % 3 = 0"]
     D -->|Assigned to| E["Partition 0"]
     
-    F["Message 2<br/>Key: 7"] -->|Hash| G["hash7 = 12345"]
+    F["Message 2<br/>(key: 7)"] -->|Hash| G["hash7 = 12345"]
     G -->|Modulo| H["12345 % 3 = 0"]
     H -->|Assigned to| E
     
-    I["Message 3<br/>Key: 11"] -->|Hash| J["hash11 = 67890"]
+    I["Message 3<br/>(key: 11)"] -->|Hash| J["hash11 = 67890"]
     J -->|Modulo| K["67890 % 3 = 1"]
     K -->|Assigned to| L["Partition 1"]
     
-    M["Message 4<br/>Key: 15"] -->|Hash| N["hash15 = 99999"]
+    M["Message 4<br/>(key: 15)"] -->|Hash| N["hash15 = 99999"]
     N -->|Modulo| O["99999 % 3 = 2"]
     O -->|Assigned to| P["Partition 2"]
     
@@ -1668,22 +1932,27 @@ gantt
 
 ```mermaid
 graph LR
-    A["LibraryEvent Object<br/>{id:1, type:ADD, book:{...}}"] -->|JsonSerializer| B["JSON String<br/>150 chars"]
-    B -->|UTF-8 Encode| C["Byte Array<br/>150 bytes"]
-    C -->|Add Headers| D["Wire Format<br/>~160 bytes"]
+    A["LibraryEvent Object<br/>{id:1, type:ADD, book:{...}}"] -->|JsonSerializer| B["JSON Bytes<br/>180 bytes"]
+    B -->|No Compression| C1["Output<br/>180 bytes<br/>no header"]
     
-    E["Integer Key<br/>1"] -->|IntegerSerializer| F["Byte Array<br/>4 bytes"]
+    B -->|Snappy| C2["Output<br/>120 bytes<br/>+ snappy header"]
+    B -->|LZ4| C3["Output<br/>110 bytes<br/>+ lz4 header"]
+    B -->|GZIP| C4["Output<br/>90 bytes<br/>+ gzip header"]
+    B -->|ZSTD| C5["Output<br/>80 bytes<br/>+ zstd header"]
     
-    D -->|Partition| G["Partition 0"]
-    F -->|Hash| G
+    C1 -->|Send| D["Kafka Broker"]
+    C2 -->|Send| D
+    C3 -->|Send| D
+    C4 -->|Send| D
+    C5 -->|Send| D
     
     style A fill:#FFE4B5
     style B fill:#FFE4B5
-    style C fill:#FFE4B5
-    style D fill:#FFE4B5
-    style E fill:#B0E0E6
-    style F fill:#B0E0E6
-    style G fill:#98FB98
+    style C1 fill:#FFB6C1
+    style C2 fill:#90EE90
+    style C3 fill:#90EE90
+    style C4 fill:#87CEEB
+    style C5 fill:#98FB98
 ```
 
 ### Producer State Machine
@@ -1757,17 +2026,17 @@ graph TB
     B --> C["Added to buffer"]
     C --> D["Batch flushed"]
     D --> E{Broker<br/>responding?}
-    
+
     E -->|No| F["Wait retry.backoff.ms"]
     F --> G{Max retries<br/>exceeded?}
     G -->|No| D
     G -->|Yes| H["Error Callback"]
     H --> I["Exception thrown<br/>to application"]
-    
+
     E -->|Yes| J["Broker ACK received"]
     J --> K["Success Callback"]
     K --> L["RecordMetadata returned"]
-    
+
     style A fill:#FFE4B5
     style J fill:#90EE90
     style H fill:#FFB6C6
@@ -1781,18 +2050,18 @@ graph TB
 graph LR
     A["Original Message<br/>180 bytes"] -->|JsonSerializer| B["JSON Bytes<br/>180 bytes"]
     B -->|No Compression| C1["Output<br/>180 bytes<br/>no header"]
-    
+
     B -->|Snappy| C2["Output<br/>120 bytes<br/>+ snappy header"]
     B -->|LZ4| C3["Output<br/>110 bytes<br/>+ lz4 header"]
     B -->|GZIP| C4["Output<br/>90 bytes<br/>+ gzip header"]
     B -->|ZSTD| C5["Output<br/>80 bytes<br/>+ zstd header"]
-    
+
     C1 -->|Send| D["Kafka Broker"]
     C2 -->|Send| D
     C3 -->|Send| D
     C4 -->|Send| D
     C5 -->|Send| D
-    
+
     style A fill:#FFE4B5
     style B fill:#FFE4B5
     style C1 fill:#FFB6C1
@@ -1812,14 +2081,14 @@ graph TB
         C["acks: all"]
         D["compression: snappy"]
     end
-    
+
     subgraph Impact ["Performance Impact"]
         E["✓ Higher throughput<br/>✗ Higher latency"]
         F["✓ Better batching<br/>✗ Delayed delivery"]
         G["✓ High durability<br/>✗ Lower throughput"]
         H["✓ Save bandwidth<br/>✗ CPU overhead"]
     end
-    
+
     A --> E
     B --> F
     C --> G
@@ -1831,21 +2100,21 @@ graph TB
 ```mermaid
 graph TB
     A["Kafka Broker Cluster"]
-    
+
     A --> B["Topic: library-events<br/>Replication Factor: 3"]
-    
+
     B --> C["Partition 0<br/>Leader: Broker 1<br/>Replicas: 1,2,3"]
     B --> D["Partition 1<br/>Leader: Broker 2<br/>Replicas: 2,3,1"]
     B --> E["Partition 2<br/>Leader: Broker 3<br/>Replicas: 3,1,2"]
-    
+
     C --> C1["Offset 0: Event-1"]
     C --> C2["Offset 1: Event-2"]
     C --> C3["Offset 2: Event-3"]
-    
+
     F["Producer sends<br/>key=1"] -->|hash1%3=0| C
     G["Producer sends<br/>key=2"] -->|hash2%3=1| D
     H["Producer sends<br/>key=3"] -->|hash3%3=2| E
-    
+
     style C fill:#90EE90
     style D fill:#87CEEB
     style E fill:#FFB6C1
@@ -1857,20 +2126,20 @@ graph TB
 ```mermaid
 graph TB
     A["Total Buffer Memory: 32MB"]
-    
+
     A --> B["Per-Partition Buffers"]
-    
+
     B --> C["Topic A - Partition 0<br/>8MB"]
     B --> D["Topic A - Partition 1<br/>8MB"]
     B --> E["Topic B - Partition 0<br/>8MB"]
     B --> F["Topic B - Partition 1<br/>8MB"]
-    
+
     G["Slow Broker"] -->|Accumulates| C
     H["Fast Send Rate"] -->|Fills Buffer"] C
-    
+
     C -->|Buffer Full| I["Backpressure Applied<br/>send() blocks"]
     I -->|Broker Catches Up| J["Buffer Drained<br/>send() resumes"]
-    
+
     style C fill:#FFB6C6
     style I fill:#FF6B6B
     style J fill:#90EE90
@@ -1904,17 +2173,17 @@ journey
 ```mermaid
 graph TD
     A["Need to send message to Kafka?"]
-    
+
     A -->|Yes| B{"Synchronous or<br/>Asynchronous?"}
-    
+
     B -->|Synchronous| C["Use .send().get()"]
     C --> C1["Best for: Critical operations<br/>where failure = immediate error"]
-    
+
     B -->|Asynchronous| D["Use .send() + callback"]
     D --> D1["Best for: High throughput<br/>where speed is critical"]
-    
+
     A -->|No| E["Don't use KafkaTemplate"]
-    
+
     style C1 fill:#90EE90
     style D1 fill:#90EE90
     style E fill:#FFB6C6
