@@ -30,6 +30,19 @@ public class LibraryEventMapper {
                 book.getUpdatedAt()
         );
     }
+
+    public static LibraryEventResponseDto toLibraryEventResponseDto(LibraryEvent libraryEvent) {
+        BookResponseDto bookResponseDto = libraryEvent.getBook() != null
+                ? toBookResponseDto(libraryEvent.getBook())
+                : null;
+        return new LibraryEventResponseDto(
+                libraryEvent.getLibraryEventId(),
+                libraryEvent.getEventType(),
+                bookResponseDto,
+                libraryEvent.getCreatedAt(),
+                libraryEvent.getUpdatedAt()
+        );
+    }
 }
 
 

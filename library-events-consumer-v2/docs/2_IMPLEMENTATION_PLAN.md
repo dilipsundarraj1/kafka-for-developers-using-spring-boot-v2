@@ -1,6 +1,29 @@
 # Implementation Plan
 ## Library Events Consumer
 
+## Table of Contents
+
+- [1. Objective](#1-objective)
+- [2. Planning Assumptions](#2-planning-assumptions)
+- [3. Execution-Order Implementation Roadmap](#3-execution-order-implementation-roadmap)
+  - [Step 1: Kafka Consumer + Configuration](#step-1-kafka-consumer--configuration--start-here)
+  - [Step 2: DTO + Deserialization](#step-2-dto--deserialization)
+  - [Step 3: Kafka Under the Hood](#step-3-kafka-under-the-hood)
+  - [Step 4: StringDeserializer vs JsonDeserializer](#step-4-stringdeserializer-vs-jsondeserializer)
+  - [Step 5: Consumer Groups and Consumer Offset Management](#step-5-consumer-groups-and-consumer-offset-management)
+  - [Step 6: Tasks - Business Logic](#step-6-tasks---business-logic)
+  - [Step 7: Integration Test to Ensure Save is Working](#step-7-integration-test-to-ensure-save-is-working)
+- [4. Testing Strategy](#4-testing-strategy)
+  - [4.1 Unit Tests](#41-unit-tests)
+  - [4.2 Integration Tests](#42-integration-tests)
+  - [4.3 Repository Tests](#43-repository-tests)
+  - [4.4 Minimum Acceptance Test Matrix](#44-minimum-acceptance-test-matrix)
+- [5. Execution Sequence Summary](#5-execution-sequence-summary)
+- [6. Implementation Checklist](#6-implementation-checklist)
+- [7. Definition of Done](#7-definition-of-done)
+
+---
+
 ## 1. Objective
 Implement a Kafka consumer for topic `library-events` that:
 - Inserts `LibraryEvent` + `Book` for `ADD`
@@ -20,7 +43,7 @@ Implement a Kafka consumer for topic `library-events` that:
 > produces a runnable, testable application.
 
 ### Step 1: Kafka Consumer + Configuration ✦ START HERE
-Path: `src/main/java/com/learnkafka/consumer`, `src/main/java/com/learnkafka/config`, `src/main/resources/application.properties`
+Path: `src/main/java/com/learnkafka/consumer`, `src/main/java/com/learnkafka/config`, `src/main/resources/application.yml`
 
 #### Goal
 Stand up a working Kafka listener that reads raw messages from `library-events` and logs them. No deserialization, no DB — just prove connectivity.
@@ -28,7 +51,7 @@ Stand up a working Kafka listener that reads raw messages from `library-events` 
 #### Modules
 - `LibraryEventsConsumer`
 - `LibraryEventsConsumerConfig` (basic factory only)
-- Kafka consumer properties in `application.properties`
+- Kafka consumer properties in `application.yml`
 
 #### Tasks
 1. Configure Kafka consumer properties in `application.yml`:
@@ -92,133 +115,155 @@ Deserialize the raw JSON string received in Step 1 into typed DTO objects. Valid
 
 ---
 
-### Step 3: Domain Model + Repository + DB Persistence
-Path: `src/main/java/com/learnkafka/domain`, `src/main/java/com/learnkafka/repository`, `src/main/java/com/learnkafka/dto`, `src/main/resources/application.yml`
+### Step 3: Kafka Under the Hood
+Path: `docs/3_Kafka_Consumer_Under_the_hood.md`, `src/main/java/com/learnkafka/consumer`, `src/main/java/com/learnkafka/config`
 
 #### Goal
-Wire persistence end-to-end: map DTOs to JPA entities and save them to PostgreSQL. Initially handle only the `ADD` event type (simple insert).
-
-#### Pre-existing (from Layer 1)
-- `LibraryEventType` enum (renamed from `EventType` to match producer payload) — ✅ already created
-- `Book` entity — ✅ already created
-- `LibraryEvent` entity — ✅ already created
+Understand how the Spring Kafka consumer works under the hood before adding advanced behavior.
 
 #### Modules
-- `LibraryEventRepository`
-- `BookRepository`
-- `LibraryEventMapper`
-- JPA/datasource configuration in `application.yml`
+- Kafka poll loop lifecycle
+- Listener container threading and partition assignment
+- Rebalance flow and record processing guarantees
+- Manual acknowledgment behavior in this project
 
 #### Tasks
-1. Configure JPA/datasource properties in `application.yml`:
-   - `spring.datasource.url`, `spring.datasource.username`, `spring.datasource.password` (matching `compose.yaml` credentials)
-   - `spring.jpa.hibernate.ddl-auto=create` (use `create` on first run to generate correct IDENTITY columns, then switch to `update`)
-   - `spring.jpa.show-sql=true` (development)
-   - `spring.jpa.properties.hibernate.format_sql=true`
-2. Create `LibraryEventRepository extends JpaRepository<LibraryEvent, Integer>`.
-3. Create `BookRepository extends JpaRepository<Book, Integer>` — needed because `Book` has a producer-provided ID and must be saved explicitly before `LibraryEvent`.
-4. Create `LibraryEventMapper` utility class (private constructor, static methods only) with:
-   - `toEntity(LibraryEventDto dto)` → internally calls `toBookEntity(dto.book())` and passes the result into the `LibraryEvent(libraryEventId, libraryEventType, book)` constructor.
-   - `toBookEntity(BookDto dto)` → returns `new Book(bookId, bookName, bookAuthor)`.
-   - **Do NOT set** `book.setLibraryEvent(libraryEvent)` in the mapper — the bidirectional back-reference must be set in the service after both entities are persisted.
-5. Update `LibraryEventService.processEvent()` to:
-   - Extract `LibraryEventDto` from `ConsumerRecord.value()` (already deserialized by `JsonDeserializer`).
-   - Map DTO → entity via `LibraryEventMapper.toEntity()`.
-   - **Null out** `libraryEvent.setBook(null)` to detach the book temporarily and avoid cascade issues on persist.
-   - Save `LibraryEvent` first via `libraryEventRepository.save()` (DB generates the ID via `@GeneratedValue(IDENTITY)`).
-   - Create a **fresh** `Book` entity from the DTO via `LibraryEventMapper.toBookEntity(libraryEventDto.book())`, set the FK (`book.setLibraryEvent(savedEvent)`), then save via `bookRepository.save()`.
-   - Set bidirectional back-reference (`savedEvent.setBook(savedBook)`) for in-memory consistency.
-   - Add `@Transactional` annotation.
-6. Verify entity scan picks up `com.learnkafka.domain` package.
-
-#### Key Design Decisions (from error fixes)
-
-##### ID Generation Strategy
-- **`LibraryEvent.libraryEventId`**: `@Id @GeneratedValue(strategy = GenerationType.IDENTITY)` — producer sends `null` for `ADD` events; DB auto-generates the ID.
-- **`Book.bookId`**: `@Id @NotNull` — producer provides the `bookId` (e.g., `1`); no `@GeneratedValue`.
-
-##### Cascade Strategy
-- **`LibraryEvent.book`**: `@OneToOne(mappedBy = "libraryEvent", cascade = {CascadeType.ALL})` — `LibraryEvent` is the **inverse side** (no `@JoinColumn`).
-- **`Book.libraryEvent`**: `@OneToOne @JoinColumn(name = "library_event_id")` — `Book` is the **owning side** (holds the FK).
-- `CascadeType.ALL` on `LibraryEvent` is now safe because `LibraryEvent` is saved first (gets its DB-generated ID), then `Book` is saved with the FK.
-- The FK column `library_event_id` lives in the `book` table.
-
-##### Save Order
-- `LibraryEvent` must be saved **before** `Book` because:
-  - `LibraryEvent` has `@GeneratedValue(IDENTITY)` with null ID → saved first to get the DB-generated ID.
-  - `Book` is the owning side with `@JoinColumn(name = "library_event_id")` → needs the `LibraryEvent` ID to write the FK.
-  - `Book` has a manually-assigned ID (`bookId`) → `JpaRepository.save()` calls `merge()`.
-
-##### Bidirectional Relationship
-- `Book` is now the **owning side** with `@JoinColumn(name = "library_event_id")` — the FK lives in the `book` table.
-- `LibraryEvent` is the **inverse side** with `@OneToOne(mappedBy = "libraryEvent")`.
-- The owning side (`book.setLibraryEvent(savedEvent)`) must be set before saving `Book` — this is what writes the FK.
-- The inverse side (`savedEvent.setBook(savedBook)`) is set after both are saved for in-memory consistency only.
-
-##### DTO Field Name Mapping
-- Producer sends `libraryEventType` in JSON; DTO record component is also named `libraryEventType` (renamed from `eventType` to match producer).
-- If the DTO field name differs from the JSON key, use `@JsonProperty("libraryEventType")` on the record component.
-
-##### DDL Auto Strategy
-- Use `ddl-auto: create` on the first run to generate tables with correct IDENTITY columns.
-- `ddl-auto: update` does **not** alter existing columns to add IDENTITY generation or remove NOT NULL constraints from a prior schema.
-- After the first successful run, switch to `ddl-auto: update` to preserve data.
+1. Study `docs/3_Kafka_Consumer_Under_the_hood.md` and map concepts to current code.
+2. Trace how `@KafkaListener` receives records and how container threads are created.
+3. Verify current `AckMode.MANUAL` behavior in `LibraryEventsConsumerConfig`.
+4. Document where offset commit happens in `LibraryEventsConsumer` (`acknowledgment.acknowledge()` in `finally`).
+5. Identify hook points for retry/error handling to be implemented in Step 6.
 
 #### Deliverables
-- End-to-end flow: Kafka message → `JsonDeserializer` → `LibraryEventDto` → `LibraryEventMapper` → `Book` + `LibraryEvent` entities → PostgreSQL.
-- Repository interfaces for both `LibraryEvent` and `Book`.
-- Mapper with `toEntity()` and `toBookEntity()` methods (no bidirectional reference setup).
-- Working DB connectivity with correct schema.
+- Clear mental model of consumer lifecycle: poll -> process -> ack/commit.
+- Project-specific notes linking Kafka internals to `LibraryEventsConsumer` and config.
 
 #### Acceptance Criteria
-- Sending an `ADD` event to `library-events` inserts both `LibraryEvent` and `Book` rows in PostgreSQL.
-- `LibraryEvent` table uses an auto-generated IDENTITY primary key.
-- `Book` table uses the producer-provided `bookId` as the primary key.
-- `LibraryEvent` and `Book` tables are created on startup.
-- App starts and connects to DB without errors.
+- Team can explain partition assignment, rebalance impact, and manual-ack commit semantics in this codebase.
+- Manual-ack flow is verified in code and documented.
 
 ---
 
-### Step 4: Business Logic, Validation, and Error Handling
-Path: `src/main/java/com/learnkafka/service`, `src/main/java/com/learnkafka/dto`, `src/main/java/com/learnkafka/config`
+### Step 4: StringDeserializer vs JsonDeserializer
+Path: `docs/4_STRING_VS_JSON_DESERIALIZER.md`, `src/main/resources/application.yml`, `src/test/resources/application.yml`
 
 #### Goal
-Add full business logic: `ADD`/`UPDATE` branching, conditional validation, exception classification, and Kafka error handling with retry + DLT.
+Decide and implement the right deserializer strategy for this consumer (`JsonDeserializer` with DTO mapping) and understand trade-offs vs `StringDeserializer`.
+
+#### Modules
+- `StringDeserializer` flow (raw payload)
+- `JsonDeserializer` flow (typed DTO)
+- Trusted packages and type mapping
+- Producer/consumer class-name mismatch handling
+
+#### Tasks
+1. Review `docs/4_STRING_VS_JSON_DESERIALIZER.md` and compare both deserializer approaches.
+2. Keep `IntegerDeserializer` for keys and `JsonDeserializer` for values in consumer config.
+3. Validate JSON deserializer properties in `application.yml`:
+   - `spring.json.trusted.packages`
+   - `spring.json.value.default.type`
+   - `spring.json.type.mapping`
+4. Verify test profile keeps equivalent deserializer settings.
+5. Capture migration note: why project moved from `ConsumerRecord<Integer, String>` to `ConsumerRecord<Integer, LibraryEventDto>`.
+
+#### Deliverables
+- Finalized deserializer strategy decision for project standards.
+- Working consumer deserialization into `LibraryEventDto`.
+
+#### Acceptance Criteria
+- Valid JSON payloads deserialize into DTOs without manual `ObjectMapper` parsing in listener code.
+- Type mapping handles producer type headers correctly.
+
+---
+
+### Step 5: Consumer Groups and Consumer Offset Management
+Path: `docs/5_CONSUMER_CONCEPTS_HANDS_ON.md`, `src/main/java/com/learnkafka/config`, `src/main/resources/application.yml`, `src/test/resources/application.yml`
+
+#### Goal
+Configure and validate consumer-group behavior and offset management so the consumer is predictable across restarts, failures, and scale-out.
+
+#### Modules
+- Consumer group ID and partition ownership
+- `auto-offset-reset` (`latest` vs `earliest`)
+- Manual acknowledgment and commit timing
+- Restart/replay behavior
+
+#### Tasks
+1. Review `docs/5_CONSUMER_CONCEPTS_HANDS_ON.md` and map concepts to project config.
+2. Confirm `spring.kafka.consumer.group-id` strategy for local and test environments.
+3. Keep `auto-offset-reset=latest` for app runtime and override to `earliest` in integration tests where needed.
+4. Verify manual commit semantics with `AckMode.MANUAL` and explicit `acknowledge()` call.
+5. Document expected behavior for:
+   - app restart
+   - new consumer joining same group
+   - rebalance while processing
+
+#### Deliverables
+- Group/offset policy documented and implemented in config.
+- Predictable commit behavior for normal and test flows.
+
+#### Acceptance Criteria
+- Consumer joins group and claims partitions as expected.
+- Offset behavior is understood and validated for both `latest` and `earliest` scenarios.
+
+---
+
+### Step 6: Tasks - Business Logic
+Path: `src/main/java/com/learnkafka/service`, `src/main/java/com/learnkafka/dto`, `src/main/java/com/learnkafka/config`, `src/main/resources/db/migration`
+
+#### Goal
+Add full business logic: `ADD`/`UPDATE` branching, conditional validation, exception classification, and Kafka error handling with retry + DLT. Any schema changes required for new business rules are delivered as new Flyway versioned migrations.
+
+> **Schema change rule:** If this step requires new columns, indexes, or constraints, create a new Flyway migration (e.g., `V3__add_status_column.sql`). Never modify existing migrations (`V1`, `V2`) and never use `ddl-auto: create/update`.
 
 #### Modules
 - `LibraryEventService` (full implementation)
 - `LibraryEventMapper` (add `updateEntity()`)
 - `LibraryEventsConsumerConfig` (error handler + retry + DLT)
+- New Flyway migrations (if schema changes are needed for business logic)
+
+#### Tasks — Schema Changes (if needed)
+1. If new columns or tables are required (e.g., a `status` column, a `failed_event` table for custom recovery):
+   - Create a new migration file: `src/main/resources/db/migration/V{N}__{description}.sql`.
+   - Check existing migrations to determine the next version number (currently `V2` is the latest).
+   - **Never edit** `V1__init_schema.sql` or `V2__add_audit_columns.sql` — they are already applied.
+   - Update JPA entities to match the new schema (add fields, getters, setters, `@Column` annotations).
+   - Verify Flyway applies the migration on startup before testing.
 
 #### Tasks — Business Logic
-1. Implement event-type branching in `LibraryEventService.processEvent()`:
-   - `ADD`: map DTO to new entity, persist via repository (already working from Step 3).
+2. Implement event-type branching in `LibraryEventService.processEvent()`:
+   - `ADD`: map DTO to new entity, persist via repository (persistence layer already in place).
    - `UPDATE`: fetch existing `LibraryEvent` by ID; apply updates from DTO via mapper; save.
-2. Add `updateEntity(LibraryEventDto dto, LibraryEvent existing)` to `LibraryEventMapper`.
-3. Implement update-not-found policy: throw `IllegalArgumentException` with descriptive message.
+3. Add `updateEntity(LibraryEventDto dto, LibraryEvent existing)` to `LibraryEventMapper`.
+4. Implement update-not-found policy: throw `IllegalArgumentException` with descriptive message.
 
 #### Tasks — Validation
-4. Enforce conditional validations in service:
+5. Enforce conditional validations in service:
    - `UPDATE` requires non-null `libraryEventId` → reject with `IllegalArgumentException`.
    - `book` must be present for both `ADD` and `UPDATE`.
-5. Validate DTO using bean validation (`Validator`) or manual checks in service.
-6. Classify exceptions:
+6. Validate DTO using bean validation (`Validator`) or manual checks in service.
+7. Classify exceptions:
    - **Non-retryable:** `IllegalArgumentException`, `JsonProcessingException` (bad data, will never succeed).
    - **Retryable:** all others (transient DB errors, network issues).
 
 #### Tasks — Error Handling & Retry
-7. Update `LibraryEventsConsumerConfig`:
+8. Update `LibraryEventsConsumerConfig`:
    - Configure `DefaultErrorHandler` with `FixedBackOff` or `ExponentialBackOff` (3 attempts, `1s`/`2s`/`4s`).
    - Register non-retryable exception classes.
    - Configure `DeadLetterPublishingRecoverer` for DLT routing to `library-events.DLT`.
    - Ensure offset commits only after success or DLT handoff.
-8. Ensure `@Transactional` boundaries prevent partial writes on failure.
+9. Ensure `@Transactional` boundaries prevent partial writes on failure.
+10. *(Optional)* If persisting failed events to a `failed_event` table for custom recovery:
+    - Create `V3__create_failed_event_table.sql` with columns: `id`, `topic`, `partition`, `offset_val`, `key`, `value`, `error_message`, `status`, `created_at`.
+    - Create `FailedEvent` entity + `FailedEventRepository`.
+    - Implement `ConsumerRecordRecoverer` that persists to this table.
 
 #### Deliverables
 - Full `ADD` + `UPDATE` service implementation.
 - Conditional validation with deterministic rejection.
 - Exception classification driving retry vs DLT behavior.
 - Error handler with backoff, retry, and dead-letter routing.
+- Any new Flyway migrations for schema changes required by business logic.
 
 #### Acceptance Criteria
 - `ADD` event inserts `LibraryEvent` + `Book` in DB.
@@ -228,27 +273,41 @@ Add full business logic: `ADD`/`UPDATE` branching, conditional validation, excep
 - Malformed JSON is rejected (non-retryable → DLT).
 - Transient DB failure triggers retry with backoff.
 - Exhausted retries route to `library-events.DLT`.
+- Any new schema changes are delivered as Flyway migrations (not Hibernate DDL).
+- `flyway_schema_history` table shows all migrations applied in order.
 
 ---
 
-## 4. Cross-Cutting Implementation
+### Step 7: Integration Test to Ensure Save is Working
+Path: `src/test/java/com/learnkafka/consumer`, `src/test/java/com/learnkafka/service`
 
-### 4.1 Observability
+#### Goal
+Verify that the save flow works end-to-end and at service level.
+
 #### Tasks
-1. Add structured logs for event lifecycle (received, processing, persisted, failed).
-2. Log Kafka metadata on every event (topic, partition, offset, key).
-3. Add metrics (Micrometer) for:
-   - processed success/failure count
-   - retry attempts
-   - DLT publish count
-   - processing latency
-4. Define alert thresholds (consumer lag, DLT spikes, retry exhaustion).
+1. Add/maintain consumer integration tests (Embedded Kafka + Testcontainers PostgreSQL):
+   - produce `ADD` event to `library-events`
+   - assert `LibraryEvent` + `Book` persisted with FK and audit fields
+2. Add/maintain service integration tests (no Kafka broker):
+   - build `ConsumerRecord<Integer, LibraryEventDto>` directly
+   - call `libraryEventService.processEvent()` and assert DB state
+3. Ensure test cleanup order in `@BeforeEach`:
+   - delete `bookRepository` first, then `libraryEventRepository`
+4. Keep test Flyway config active (`ddl-auto: none`, Flyway enabled).
+
+#### Deliverables
+- Integration tests that prove save path correctness.
+- Stable repeatable test setup with Flyway-managed schema.
+
+#### Acceptance Criteria
+- Tests confirm parent/child rows are persisted correctly for `ADD` flow.
+- Tests fail on broken mapping/order/FK behavior.
 
 ---
 
-## 5. Testing Strategy
+## 4. Testing Strategy
 
-### 5.1 Unit Tests
+### 4.1 Unit Tests
 Path: `src/test/java/com/learnkafka/service`
 
 - `ADD` event → successful insert
@@ -258,7 +317,7 @@ Path: `src/test/java/com/learnkafka/service`
 - Missing `libraryEventId` on `UPDATE` → validation failure
 - Exception classification (retryable vs non-retryable)
 
-### 5.2 Integration Tests
+### 4.2 Integration Tests
 Path: `src/test/java/com/learnkafka/consumer`
 
 - Consume `ADD` from Kafka → persisted in DB
@@ -266,7 +325,7 @@ Path: `src/test/java/com/learnkafka/consumer`
 - Invalid payload → routed to error flow (DLT/logged)
 - DB transient failure → retry policy triggered
 
-### 5.3 Repository Tests
+### 4.3 Repository Tests
 Path: `src/test/java/com/learnkafka/repository`
 
 - Save `LibraryEvent` with `Book` → both persisted
@@ -274,7 +333,7 @@ Path: `src/test/java/com/learnkafka/repository`
 - Update existing entity → fields updated
 - Cascade behavior validated
 
-### 5.4 Minimum Acceptance Test Matrix
+### 4.4 Minimum Acceptance Test Matrix
 | # | Scenario | Expected Outcome |
 |---|----------|-----------------|
 | 1 | Valid `ADD` event | `LibraryEvent` + `Book` inserted in DB |
@@ -286,24 +345,26 @@ Path: `src/test/java/com/learnkafka/repository`
 
 ---
 
-## 6. Execution Sequence Summary
+## 5. Execution Sequence Summary
 
 | Step | What | Key Outcome |
 |------|------|-------------|
 | **1** | **Kafka Consumer + Config** | Raw messages logged from `library-events` topic |
 | **2** | **DTO + Deserialization** | JSON → typed `LibraryEventDto`; consumer delegates to service |
-| **3** | **Domain Model + Repository + DB Save** | DTO → Entity → PostgreSQL (ADD flow works end-to-end) |
-| **4** | **Business Logic + Validation + Error Handling** | ADD/UPDATE branching, validation, retry, DLT |
-| 5 | Unit + Integration Tests | Validate all paths |
-| 6 | Observability + Runbook | Production readiness |
+| **3** | **Kafka Under the Hood** | Consumer internals understood: poll loop, rebalance, manual ack/commit |
+| **4** | **StringDeserializer vs JsonDeserializer** | Deserializer strategy finalized and DTO deserialization validated |
+| **5** | **Consumer Groups and Consumer Offset Management** | Group behavior and offset semantics configured and validated |
+| **6** | **Tasks - Business Logic** | ADD/UPDATE branching, validation, retry, DLT |
+| **7** | **Integration Test to Ensure Save is Working** | Save path verified with integration tests |
 
 > **Rationale:** This outside-in order lets you verify each layer independently.
 > Step 1 proves Kafka connectivity. Step 2 proves deserialization. Step 3 proves
-> persistence. Step 4 adds the business rules on top of a known-working pipeline.
+> Kafka internals. Step 4 proves deserializer strategy. Step 5 proves group/offset
+> behavior. Step 6 adds business rules. Step 7 locks in save behavior via integration tests.
 
 ---
 
-## 7. Implementation Checklist
+## 6. Implementation Checklist
 
 ### Step 1: Kafka Consumer + Configuration
 - [ ] Configure Kafka consumer properties (`bootstrap-servers`, `group-id`, deserializers, `auto-offset-reset`)
@@ -320,22 +381,28 @@ Path: `src/test/java/com/learnkafka/repository`
 - [x] Update consumer to delegate to service ✅
 - [ ] Verify deserialization of valid JSON payloads
 
-### Step 3: Domain Model + Repository + DB Save
-- [x] Rename `EventType` enum → `LibraryEventType` (match producer payload) ✅
-- [x] Update `Book` entity — `@Id @NotNull` on `bookId`, no `@GeneratedValue` (producer-provided ID) ✅
-- [x] Update `LibraryEvent` entity — `@Id @GeneratedValue(IDENTITY)` on `libraryEventId` (DB-generated for ADD) ✅
-- [x] Update `LibraryEvent` — inverse side with `@OneToOne(mappedBy = "libraryEvent", cascade = ALL)` ✅
-- [x] Update `Book` — owning side with `@OneToOne @JoinColumn(name = "library_event_id")` ✅
-- [x] Configure JPA/datasource properties in `application.yml` (matching `compose.yaml` credentials) ✅
-- [x] Set `ddl-auto: create` for initial schema generation with IDENTITY columns ✅
-- [x] Create `LibraryEventRepository` ✅
-- [x] Create `BookRepository` (explicit `Book` save needed due to producer-provided ID) ✅
-- [x] Create `LibraryEventMapper` with `toEntity()` + `toBookEntity()` (no bidirectional ref in mapper) ✅
-- [x] Update `LibraryEventDto` — rename field to `libraryEventType` to match producer JSON ✅
-- [x] Update service: save `LibraryEvent` first → save `Book` with FK → set back-reference ✅
-- [ ] Verify `ADD` event persists `LibraryEvent` + `Book` in DB
+### Step 3: Kafka Under the Hood
+- [ ] Read `docs/3_Kafka_Consumer_Under_the_hood.md`
+- [ ] Map poll/dispatch/rebalance concepts to `LibraryEventsConsumer` and container config
+- [ ] Verify and document `AckMode.MANUAL` commit flow in current code
+- [ ] Identify hook points for retry/error handling
 
-### Step 4: Business Logic + Validation + Error Handling
+### Step 4: StringDeserializer vs JsonDeserializer
+- [ ] Read `docs/4_STRING_VS_JSON_DESERIALIZER.md`
+- [ ] Validate `JsonDeserializer` config in `application.yml`
+- [ ] Validate test deserializer config in `src/test/resources/application.yml`
+- [ ] Document why DTO-based `JsonDeserializer` is preferred in this project
+
+### Step 5: Consumer Groups and Consumer Offset Management
+- [ ] Read `docs/5_CONSUMER_CONCEPTS_HANDS_ON.md`
+- [ ] Validate `group-id` strategy and environment overrides
+- [ ] Validate `auto-offset-reset` usage (`latest` app, `earliest` integration tests)
+- [ ] Verify manual acknowledgment and offset commit timing
+- [ ] Document restart/rebalance behavior expectations
+
+### Step 6: Tasks - Business Logic
+- [ ] Create new Flyway migration(s) if schema changes are needed (e.g., `V3__create_failed_event_table.sql`)
+- [ ] **Never edit** existing migrations (`V1`, `V2`) — only add new versioned files
 - [ ] Implement `UPDATE` path in service (fetch → update → save)
 - [ ] Add `updateEntity()` to `LibraryEventMapper`
 - [ ] Add conditional validations (`libraryEventId` required for `UPDATE`, `book` required always)
@@ -343,7 +410,15 @@ Path: `src/test/java/com/learnkafka/repository`
 - [ ] Classify exceptions (retryable vs non-retryable)
 - [ ] Configure retry/backoff in `LibraryEventsConsumerConfig`
 - [ ] Configure `DeadLetterPublishingRecoverer` for DLT routing
+- [ ] *(Optional)* Create `FailedEvent` entity + `FailedEventRepository` backed by `V3` migration
 - [ ] Finalize decision table options from `docs/PRD.md` section 11.10
+
+### Step 7: Integration Test to Ensure Save is Working
+- [ ] Add/verify consumer integration test for `ADD` save flow (Embedded Kafka + Testcontainers)
+- [ ] Add/verify service integration test for `processEvent()` save flow (manual `ConsumerRecord`)
+- [ ] Assert `LibraryEvent` + `Book` row counts and FK relationship
+- [ ] Assert audit columns are populated (`createdAt`, `updatedAt`)
+- [ ] Keep cleanup order in `@BeforeEach` (book first, then library_event)
 
 ### Post-Implementation
 - [ ] Add unit tests for service
@@ -352,7 +427,7 @@ Path: `src/test/java/com/learnkafka/repository`
 - [ ] Add structured logging and metrics
 - [ ] Document replay/runbook basics
 
-## 8. Definition of Done
+## 7. Definition of Done
 - Consumer reads from `library-events` topic.
 - `ADD` inserts `LibraryEvent` + `Book` into PostgreSQL.
 - `UPDATE` updates existing event based on agreed not-found policy.

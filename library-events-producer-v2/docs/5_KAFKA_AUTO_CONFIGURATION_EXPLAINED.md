@@ -5,10 +5,18 @@ This document explains how Kafka Auto Configuration works in Spring Boot, from r
 ## Table of Contents
 1. [Overview](#overview)
 2. [Configuration Flow](#configuration-flow)
-3. [Step-by-Step Process](#step-by-step-process)
-4. [Your Project Example](#your-project-example)
-5. [Key Classes Involved](#key-classes-involved)
-6. [How It All Works Together](#how-it-all-works-together)
+3. [How Spring Kafka Auto-Configures the KafkaTemplate](#how-spring-kafka-auto-configures-the-kafkatemplate)
+   - [The application.yml — Where It All Starts](#the-applicationyml--where-it-all-starts)
+   - [Key Spring Kafka Classes Involved](#key-spring-kafka-classes-involved)
+   - [Step-by-Step Auto-Configuration Flow](#step-by-step-auto-configuration-flow)
+   - [Auto-Configuration Flow Diagram](#auto-configuration-flow-diagram)
+   - [How the Classes Wire Together — Mermaid Diagram](#how-the-classes-wire-together--mermaid-diagram)
+   - [What Happens If You Override the Auto-Configuration?](#what-happens-if-you-override-the-auto-configuration)
+   - [Quick Reference: Property → Class → Bean Mapping](#quick-reference-property--class--bean-mapping)
+4. [Step-by-Step Process](#step-by-step-process)
+5. [Your Project Example](#your-project-example)
+6. [Key Classes Involved](#key-classes-involved)
+7. [How It All Works Together](#how-it-all-works-together)
 
 ---
 
@@ -41,6 +49,331 @@ KafkaTemplate Bean Creation
        ↓
 Dependency Injection (Your Code)
 ```
+
+---
+
+## How Spring Kafka Auto-Configures the KafkaTemplate
+
+Now that we've seen the high-level configuration flow, the next question is: **how does Spring Boot create and configure the `KafkaTemplate` in the first place?** You never write `new KafkaTemplate(...)` yourself - Spring Boot's auto-configuration handles this by reading your `application.yml` files.
+
+### The application.yml — Where It All Starts
+
+In this project, the Kafka-related configuration lives across multiple YAML files:
+
+**`application.yml` (base config)**
+```yaml
+spring:
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+```
+
+**`application-dev.yml` (dev profile)**
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+```
+
+**`application-prod.yml` (prod profile)**
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: kafka.prod.com:9092
+```
+
+Spring Boot merges these files based on the active profile (`spring.profiles.active: dev`), producing an effective configuration like:
+
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+```
+
+### Key Spring Kafka Classes Involved
+
+Here are the main classes that participate in auto-configuring the `KafkaTemplate`, listed in the order they come into play:
+
+| #  | Class                            | Package / JAR                           | Role                                                                                     |
+|----|----------------------------------|-----------------------------------------|------------------------------------------------------------------------------------------|
+| 1  | `KafkaProperties`                | `spring-boot-autoconfigure`             | A `@ConfigurationProperties` class that **binds** all `spring.kafka.*` properties from YAML into a strongly-typed Java object. |
+| 2  | `KafkaAutoConfiguration`         | `spring-boot-autoconfigure`             | The **main auto-configuration class**. Annotated with `@ConditionalOnClass(KafkaTemplate.class)` - only activates when Spring Kafka is on the classpath. |
+| 3  | `DefaultKafkaProducerFactory`    | `spring-kafka`                          | The **ProducerFactory** implementation. Holds the producer configuration map and is responsible for creating `KafkaProducer` instances. |
+| 4  | `KafkaTemplate`                  | `spring-kafka`                          | The **high-level API** your code injects. Delegates to the `ProducerFactory` to obtain a `KafkaProducer` and send messages. |
+| 5  | `KafkaProducer`                  | `kafka-clients` (Apache Kafka)          | The **actual low-level Kafka client** that handles serialization, partitioning, batching, network I/O, and acknowledgments. |
+| 6  | `ProducerConfig`                 | `kafka-clients` (Apache Kafka)          | A constants class (`BOOTSTRAP_SERVERS_CONFIG`, `KEY_SERIALIZER_CLASS_CONFIG`, etc.) used as keys in the configuration map. |
+
+### Step-by-Step Auto-Configuration Flow
+
+Here is exactly what happens when your Spring Boot application starts:
+
+#### Step 1 — Classpath Scanning
+
+When you include `spring-boot-starter-kafka` in your `build.gradle`:
+
+```groovy
+implementation 'org.springframework.boot:spring-boot-starter'
+implementation 'org.springframework.kafka:spring-kafka'
+```
+
+Spring Boot detects `KafkaTemplate.class` on the classpath. This satisfies the `@ConditionalOnClass` condition on `KafkaAutoConfiguration`, so it activates.
+
+#### Step 2 — Property Binding via `KafkaProperties`
+
+`KafkaAutoConfiguration` is annotated with `@EnableConfigurationProperties(KafkaProperties.class)`, which tells Spring Boot to:
+
+1. Instantiate a `KafkaProperties` object.
+2. Bind every property under the `spring.kafka` prefix to it.
+
+```java
+@ConfigurationProperties(prefix = "spring.kafka")
+public class KafkaProperties {
+
+    private List<String> bootstrapServers;          // <- spring.kafka.bootstrap-servers
+
+    private final Producer producer = new Producer();
+
+    public static class Producer {
+        private Class<?> keySerializer;             // <- spring.kafka.producer.key-serializer
+        private Class<?> valueSerializer;           // <- spring.kafka.producer.value-serializer
+        private String acks;                        // <- spring.kafka.producer.acks
+        private Integer retries;                    // <- spring.kafka.producer.retries
+        // ... many more fields
+    }
+
+    /**
+     * Converts the bound properties into a flat Map<String, Object>
+     * that can be passed directly to the Kafka client.
+     */
+    public Map<String, Object> buildProducerProperties() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, this.bootstrapServers);
+        if (this.producer.keySerializer != null)
+            props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, this.producer.keySerializer);
+        if (this.producer.valueSerializer != null)
+            props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, this.producer.valueSerializer);
+        // ... remaining properties
+        return props;
+    }
+}
+```
+
+For **this project**, the resulting map looks like:
+
+```java
+{
+    "bootstrap.servers"  : "localhost:9092",
+    "key.serializer"     : "org.apache.kafka.common.serialization.IntegerSerializer",
+    "value.serializer"   : "org.springframework.kafka.support.serializer.JsonSerializer"
+}
+```
+
+#### Step 3 — `ProducerFactory` Bean Creation
+
+`KafkaAutoConfiguration` defines a `@Bean` method that creates a `DefaultKafkaProducerFactory` **only if** no other `ProducerFactory` bean exists (`@ConditionalOnMissingBean`):
+
+```java
+@Bean
+@ConditionalOnMissingBean(ProducerFactory.class)
+public DefaultKafkaProducerFactory<?, ?> kafkaProducerFactory(
+        KafkaProperties properties) {
+
+    // Convert YAML properties -> Map<String, Object>
+    Map<String, Object> producerProps = properties.buildProducerProperties();
+
+    // Create the factory that will produce KafkaProducer instances
+    return new DefaultKafkaProducerFactory<>(producerProps);
+}
+```
+
+Internally, `DefaultKafkaProducerFactory` stores the config map and creates the actual Apache Kafka `KafkaProducer` lazily (on first `send()` call):
+
+```java
+public class DefaultKafkaProducerFactory<K, V> implements ProducerFactory<K, V> {
+
+    private final Map<String, Object> configs;
+
+    @Override
+    public Producer<K, V> createProducer() {
+        return new KafkaProducer<>(this.configs);   // <- Apache Kafka client
+    }
+}
+```
+
+#### Step 4 — `KafkaTemplate` Bean Creation
+
+Next, `KafkaAutoConfiguration` creates the `KafkaTemplate` bean, passing the `ProducerFactory` from Step 3:
+
+```java
+@Bean
+@ConditionalOnMissingBean(KafkaTemplate.class)
+public KafkaTemplate<?, ?> kafkaTemplate(
+        ProducerFactory<Object, Object> kafkaProducerFactory,
+        ProducerListener<Object, Object> kafkaProducerListener) {
+
+    KafkaTemplate<Object, Object> template =
+        new KafkaTemplate<>(kafkaProducerFactory);
+    template.setProducerListener(kafkaProducerListener);
+    return template;
+}
+```
+
+At this point, the `KafkaTemplate` bean is fully configured and sitting in the Spring application context.
+
+#### Step 5 — Dependency Injection into Your Code
+
+Spring injects the auto-configured `KafkaTemplate` wherever it's needed. In this project, that's `LibraryEventProducer`:
+
+```java
+@Component
+public class LibraryEventProducer {
+
+    private final KafkaTemplate<Integer, LibraryEvent> kafkaTemplate;
+    private final String topicName;
+
+    public LibraryEventProducer(
+            KafkaTemplate<Integer, LibraryEvent> kafkaTemplate,      // <- Auto-configured bean
+            @Value("${library.events.topic:library-events}") String topicName) {
+        this.kafkaTemplate = kafkaTemplate;
+        this.topicName = topicName;
+    }
+}
+```
+
+### Auto-Configuration Flow Diagram
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  application.yml  +  application-dev.yml  (merged by profile)     │
+│                                                                   │
+│  spring.kafka.bootstrap-servers = localhost:9092                   │
+│  spring.kafka.producer.key-serializer = IntegerSerializer         │
+│  spring.kafka.producer.value-serializer = JsonSerializer          │
+└──────────────────────────┬────────────────────────────────────────┘
+                           ↓
+┌───────────────────────────────────────────────────────────────────┐
+│  KafkaProperties  (@ConfigurationProperties)                      │
+│                                                                   │
+│  • Binds spring.kafka.* -> strongly-typed fields                  │
+│  • buildProducerProperties() -> Map<String, Object>               │
+└──────────────────────────┬────────────────────────────────────────┘
+                           ↓
+┌───────────────────────────────────────────────────────────────────┐
+│  KafkaAutoConfiguration  (@Configuration)                         │
+│                                                                   │
+│  @ConditionalOnClass(KafkaTemplate.class)  <- spring-kafka on CP │
+│  @EnableConfigurationProperties(KafkaProperties.class)            │
+└────────────┬─────────────────────────────┬────────────────────────┘
+             ↓                             ↓
+┌─────────────────────────┐   ┌──────────────────────────────┐
+│  DefaultKafkaProducer-  │   │  KafkaTemplate               │
+│  Factory  @Bean         │-->|  @Bean                       │
+│                         │   │                              │
+│  Holds producer config  │   │  High-level send() API       │
+│  Creates KafkaProducer  │   │  Delegates to ProducerFactory│
+└─────────────────────────┘   └──────────────┬───────────────┘
+                                             ↓
+┌───────────────────────────────────────────────────────────────────┐
+│  LibraryEventProducer                                             │
+│  (@Component)                                                     │
+│                                                                   │
+│  Injects KafkaTemplate via                                        │
+│  constructor injection                                            │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### How the Classes Wire Together — Mermaid Diagram
+
+```mermaid
+flowchart TD
+    subgraph YAML["Configuration Files"]
+        A1["application.yml<br/>key-serializer, value-serializer"]
+        A2["application-dev.yml<br/>bootstrap-servers: localhost:9092"]
+    end
+
+    subgraph SB["Spring Boot Auto-Configuration<br/>(spring-boot-autoconfigure JAR)"]
+        B["KafkaProperties<br/><i>@ConfigurationProperties(prefix=spring.kafka)</i><br/>Binds YAML -> Java fields"]
+        C["KafkaAutoConfiguration<br/><i>@Configuration</i><br/><i>@ConditionalOnClass(KafkaTemplate.class)</i>"]
+    end
+
+    subgraph SK["Spring Kafka<br/>(spring-kafka JAR)"]
+        D["DefaultKafkaProducerFactory<br/><i>implements ProducerFactory</i><br/>Holds config map, creates producers"]
+        E["KafkaTemplate&lt;K, V&gt;<br/><i>implements KafkaOperations</i><br/>High-level send API"]
+    end
+
+    subgraph AK["Apache Kafka Client<br/>(kafka-clients JAR)"]
+        F["KafkaProducer&lt;K, V&gt;<br/>Serialization, partitioning,<br/>batching, network I/O"]
+        G["ProducerConfig<br/>Constants: BOOTSTRAP_SERVERS_CONFIG,<br/>KEY_SERIALIZER_CLASS_CONFIG, etc."]
+    end
+
+    subgraph APP["Your Application"]
+        H["LibraryEventProducer<br/><i>@Component</i><br/>Injects KafkaTemplate"]
+    end
+
+    A1 -->|"merged by profile"| B
+    A2 -->|"merged by profile"| B
+    B -->|"buildProducerProperties()"| C
+    G -.->|"keys used in config map"| B
+    C -->|"@Bean ProducerFactory"| D
+    C -->|"@Bean KafkaTemplate"| E
+    D -->|"passed to constructor"| E
+    D -->|"createProducer()"| F
+    E -->|"injected via DI"| H
+```
+
+### What Happens If You Override the Auto-Configuration?
+
+Because every auto-configured bean is guarded by `@ConditionalOnMissingBean`, you can replace any part of the chain:
+
+| What You Define                        | What Auto-Config Skips                            |
+|----------------------------------------|---------------------------------------------------|
+| Your own `ProducerFactory` `@Bean`     | Auto-config **will not** create its `ProducerFactory` |
+| Your own `KafkaTemplate` `@Bean`       | Auto-config **will not** create its `KafkaTemplate`   |
+| Both                                   | Auto-config backs off entirely for the producer side  |
+
+**Example - Custom `ProducerFactory` with additional config:**
+
+```java
+@Configuration
+public class CustomKafkaConfig {
+
+    @Bean
+    public ProducerFactory<Integer, LibraryEvent> producerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        props.put(ProducerConfig.ACKS_CONFIG, "all");
+        props.put(ProducerConfig.RETRIES_CONFIG, 10);
+        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        return new DefaultKafkaProducerFactory<>(props);
+    }
+}
+```
+
+When Spring Boot sees that a `ProducerFactory` bean already exists, it skips its own factory creation but **still** creates the `KafkaTemplate` (using your factory) - because `KafkaTemplate` is still missing.
+
+### Quick Reference: Property → Class → Bean Mapping
+
+```
+application.yml property                   KafkaProperties field              ProducerConfig constant                    Final config map key
+-----------------------------------------  ---------------------------------  -----------------------------------------  -------------------------
+spring.kafka.bootstrap-servers             bootstrapServers                   BOOTSTRAP_SERVERS_CONFIG                   "bootstrap.servers"
+spring.kafka.producer.key-serializer       producer.keySerializer             KEY_SERIALIZER_CLASS_CONFIG                "key.serializer"
+spring.kafka.producer.value-serializer     producer.valueSerializer           VALUE_SERIALIZER_CLASS_CONFIG              "value.serializer"
+spring.kafka.producer.acks                 producer.acks                      ACKS_CONFIG                                "acks"
+spring.kafka.producer.retries              producer.retries                   RETRIES_CONFIG                             "retries"
+spring.kafka.producer.batch-size           producer.batchSize                 BATCH_SIZE_CONFIG                          "batch.size"
+spring.kafka.producer.buffer-memory        producer.bufferMemory              BUFFER_MEMORY_CONFIG                       "buffer.memory"
+spring.kafka.producer.compression-type     producer.compressionType           COMPRESSION_TYPE_CONFIG                    "compression.type"
+spring.kafka.producer.properties.*         producer.properties                (passed through as-is)                     (property key as-is)
+```
+
+> **Key Takeaway:** You write human-friendly YAML -> `KafkaProperties` binds it -> `buildProducerProperties()` converts it to the flat `Map<String, Object>` that Apache Kafka's `KafkaProducer` expects -> `DefaultKafkaProducerFactory` holds that map -> `KafkaTemplate` uses the factory. The entire chain is created and wired automatically by `KafkaAutoConfiguration`.
 
 ---
 
@@ -361,9 +694,16 @@ library:
 │ 3. Property Binding                                             │
 │    application.yml → KafkaProperties object                     │
 │                                                                 │
-│    spring.kafka.bootstrap-servers: localhost:9092               │
-│    spring.kafka.producer.key-serializer: IntegerSerializer      │
-│    spring.kafka.producer.value-serializer: JsonSerializer       │
+│    spring.kafka.bootstrap-servers → KafkaProperties.bootstrapServers
+│    spring.kafka.producer.key-serializer → KafkaProperties.producer.keySerializer
+│    spring.kafka.producer.value-serializer → KafkaProperties.producer.valueSerializer
+│                                                                 │
+│    spring.kafka.producer.acks → KafkaProperties.producer.acks
+│    spring.kafka.producer.retries → KafkaProperties.producer.retries
+│    spring.kafka.producer.batch-size → KafkaProperties.producer.batchSize
+│    spring.kafka.producer.buffer-memory → KafkaProperties.producer.bufferMemory
+│    spring.kafka.producer.compression-type → KafkaProperties.producer.compressionType
+│    spring.kafka.producer.properties.* → KafkaProperties.producer.properties
 └────────────────────────────┬────────────────────────────────────┘
                              ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -401,17 +741,6 @@ library:
 │        this.kafkaTemplate = kt; // ← Injected here             │
 │      }                                                          │
 │    }                                                            │
-└────────────────────────────┬────────────────────────────────────┘
-                             ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ 8. Runtime - Sending Messages                                   │
-│    kafkaTemplate.send(topic, event)                             │
-│            ↓                                                    │
-│    ProducerFactory.createProducer()                             │
-│            ↓                                                    │
-│    new KafkaProducer<>(configs)  ← Apache Kafka Client          │
-│            ↓                                                    │
-│    Send to Kafka Broker (localhost:9092)                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

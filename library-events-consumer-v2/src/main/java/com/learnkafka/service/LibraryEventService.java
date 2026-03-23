@@ -4,6 +4,7 @@ import com.learnkafka.domain.Book;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.dto.LibraryEventDto;
 import com.learnkafka.dto.LibraryEventMapper;
+import com.learnkafka.dto.LibraryEventResponseDto;
 import com.learnkafka.repository.BookRepository;
 import com.learnkafka.repository.LibraryEventRepository;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -11,6 +12,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Optional;
 
 @Service
 public class LibraryEventService {
@@ -46,6 +50,20 @@ public class LibraryEventService {
         savedEvent.setBook(savedBook);
 
         log.info("Successfully persisted the library event : {}", savedEvent);
+    }
+
+    public List<LibraryEventResponseDto> findAll() {
+        log.info("Fetching all library events");
+        return libraryEventRepository.findAll()
+                .stream()
+                .map(LibraryEventMapper::toLibraryEventResponseDto)
+                .toList();
+    }
+
+    public Optional<LibraryEventResponseDto> findById(Integer libraryEventId) {
+        log.info("Fetching library event with id: {}", libraryEventId);
+        return libraryEventRepository.findById(libraryEventId)
+                .map(LibraryEventMapper::toLibraryEventResponseDto);
     }
 }
 
