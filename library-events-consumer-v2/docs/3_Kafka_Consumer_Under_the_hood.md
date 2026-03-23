@@ -33,7 +33,7 @@ flowchart TB
     B1["application.yml spring.kafka.consumer.*"] --> B2["KafkaProperties binding"]
     B2 --> B3["ConsumerFactory<Integer, LibraryEventDto>"]
     B3 --> B4["ConcurrentKafkaListenerContainerFactory"]
-    B4 --> B5["AckMode.MANUAL"]
+    B4 --> B5["AckMode.BATCH"]
   end
 
   subgraph S3["Step 3 - Concurrent Message Listener Container & Poll Loop"]
@@ -44,7 +44,7 @@ flowchart TB
   end
 
   subgraph S4["Step 4 - @KafkaListener Method Dispatch"]
-    D1["LibraryEventsConsumer.onMessage(record, acknowledgment)"] --> D2["Log topic/partition/offset/key/value"]
+    D1["LibraryEventsConsumer.onMessage(record)"] --> D2["Log topic/partition/offset/key/value"]
     D2 --> D3["libraryEventService.processEvent(record)"]
   end
 
@@ -53,8 +53,8 @@ flowchart TB
   end
 
   subgraph S6["Step 6 - Offset Commit"]
-    F1["finally { acknowledgment.acknowledge(); }"] --> F2["Commit offset to Kafka"]
-    F2 --> F3["Next poll continues from committed offset"]
+    F1["Listener finishes processing current poll batch"] --> F2["Container commits offsets for the batch"]
+    F2 --> F3["Next poll continues after committed batch offsets"]
   end
 
   A3 --> B4
@@ -77,7 +77,7 @@ flowchart TB
 - Spring binds `spring.kafka.*` properties to `KafkaProperties`.
 - `ConsumerFactory<Integer, LibraryEventDto>` is built from these settings.
 - `ConcurrentKafkaListenerContainerFactory` wraps the consumer factory.
-- This project configures `AckMode.MANUAL`.
+- This flow assumes `AckMode.BATCH`.
 
 ---
 
@@ -108,9 +108,9 @@ flowchart TB
 
 ### Step 6 — Offset Commit
 
-- In MANUAL ack mode, commit happens only when `acknowledgment.acknowledge()` is called.
-- Current implementation calls it in a `finally` block to ensure offset commit after listener execution path completes.
-- Next poll resumes from committed offsets.
+- In BATCH ack mode, offsets are committed after the records returned from a `poll()` have been processed.
+- The listener method does not need an `Acknowledgment` parameter for this flow.
+- Next poll resumes from the latest committed batch offsets.
 
 ---
 
@@ -132,7 +132,7 @@ flowchart TB
     B1["LibraryEventsConsumerConfig.kafkaListenerContainerFactory(...)"]
     B2["Inject ConsumerFactory<Integer, LibraryEventDto>"]
     B3["Build ConcurrentKafkaListenerContainerFactory"]
-    B4["Set AckMode.MANUAL"]
+    B4["Set AckMode.BATCH"]
     B1 --> B2 --> B3 --> B4
   end
 
@@ -158,7 +158,7 @@ flowchart TB
   subgraph S6["Step 6\nContainer Startup & Poll Loop"]
     E1["Registry starts listener container"] --> E2["KafkaConsumer.poll() loop"]
     E2 --> E3["Deserialize -> ConsumerRecord<Integer, LibraryEventDto>"]
-    E3 --> E4["Invoke onMessage(record, acknowledgment)"]
+    E3 --> E4["Invoke onMessage(record)"]
   end
 ```
 
@@ -185,7 +185,7 @@ flowchart TB
 
 - `LibraryEventsConsumerConfig` defines `kafkaListenerContainerFactory(...)`.
 - Spring injects the auto-configured `ConsumerFactory<Integer, LibraryEventDto>`.
-- You wrap it in `ConcurrentKafkaListenerContainerFactory` and apply project-specific settings (e.g., `AckMode.MANUAL`).
+- You wrap it in `ConcurrentKafkaListenerContainerFactory` and apply project-specific settings (e.g., `AckMode.BATCH`).
 - Kafka connection/deserializer settings still come from `application.yml`.
 
 ---
@@ -217,7 +217,7 @@ flowchart TB
 - `KafkaListenerEndpointRegistry` starts listener containers at runtime.
 - Container threads run `KafkaConsumer.poll()` continuously.
 - Records are deserialized into `ConsumerRecord<Integer, LibraryEventDto>`.
-- Spring dispatches each record to `LibraryEventsConsumer.onMessage(...)`.
+- Spring dispatches each record to `LibraryEventsConsumer.onMessage(...)`, and batch commits happen after the processed poll batch completes.
 
 ---
 
