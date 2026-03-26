@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Unit and integration testing patterns for this Spring Boot 4.0 Kafka consumer project using JUnit Jupiter, Testcontainers 2.x, EmbeddedKafka, and MockMvc.
+description: Testing patterns for this Spring Boot Kafka consumer project, covering unit and integration-style workflows with JUnit Jupiter, Testcontainers, EmbeddedKafka, and MockMvc.
 ---
 
 ## About this skill

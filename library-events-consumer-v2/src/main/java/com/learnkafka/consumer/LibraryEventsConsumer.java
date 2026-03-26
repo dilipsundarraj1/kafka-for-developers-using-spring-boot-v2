@@ -31,11 +31,10 @@ public class LibraryEventsConsumer {
     public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord,
                           Acknowledgment acknowledgment) {
         log.info("ConsumerRecord : {}", consumerRecord);
-        try {
-            libraryEventService.processEvent(consumerRecord);
-        } finally {
-            acknowledgment.acknowledge();
-        }
+        libraryEventService.processEvent(consumerRecord);
+        // Only acknowledge on success — on exception, DefaultErrorHandler takes over:
+        // it retries with FixedBackOff, then persists to failure_record table on exhaustion.
+        acknowledgment.acknowledge();
     }
 }
 

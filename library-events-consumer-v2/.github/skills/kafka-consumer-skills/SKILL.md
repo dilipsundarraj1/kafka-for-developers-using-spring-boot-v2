@@ -1,3 +1,8 @@
+---
+name: kafka-consumer
+description: Kafka consumer patterns for this Spring Boot project, including JSON deserialization, persistence, and integration testing.
+---
+
 # Kafka Consumer Skill
 
 > **Scope:** Creating a new Kafka consumer that listens to a topic, deserializes JSON into DTOs, processes via a service layer, and persists to PostgreSQL — **plus** integration tests using **Embedded Kafka** and **Testcontainers (PostgreSQL)**.

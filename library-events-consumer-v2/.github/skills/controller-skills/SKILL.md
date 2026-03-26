@@ -1,3 +1,8 @@
+---
+name: controller
+description: REST controller patterns for this Spring Boot Kafka consumer project, including CRUD endpoints and companion integration tests.
+---
+
 # Controller Skill
 
 > **Scope:** Creating a new REST controller with full CRUD operations **and** its companion integration-test class.

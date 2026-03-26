@@ -7,19 +7,22 @@ It keeps the same technical content, but organizes it in an implementation-first
 ## Table of Contents
 
 - [How to Use This Reference](#how-to-use-this-reference)
-- [Reliability Strategy Reference](#reliability-strategy-reference)
+- [Part 1: Producer Reliability Configuration](#part-1-producer-reliability-configuration)
   - [1) Acknowledgment Modes (`acks`)](#1-acknowledgment-modes-acks)
   - [2) Retries and Retry Backoff](#2-retries-and-retry-backoff)
   - [3) Idempotent Producer (`enable.idempotence`)](#3-idempotent-producer-enableidempotence)
   - [4) `min.insync.replicas` (Broker/Topic Config)](#4-mininsyncreplicas-brokertopic-config)
   - [5) `max.in.flight.requests.per.connection`](#5-maxinflightrequestsperconnection)
-  - [6) Handling Retriable vs Non-Retriable Errors](#6-handling-retriable-vs-non-retriable-errors)
-  - [7) Producer Timeouts](#7-producer-timeouts)
-  - [8) Application-Level Retry (Spring Retry / Custom Logic)](#8-application-level-retry-spring-retry--custom-logic)
-  - [9) Error Handling in Callbacks / CompletableFuture](#9-error-handling-in-callbacks--completablefuture)
-  - [10) Recommended Reliable Producer Configuration (Summary)](#10-recommended-reliable-producer-configuration-summary)
-  - [11) Testing Reliability](#11-testing-reliability)
-  - [12) Configuring the Reliable Producer in Spring Boot (Hands-On)](#12-configuring-the-reliable-producer-in-spring-boot-hands-on)
+  - [6) Producer Timeouts](#6-producer-timeouts)
+  - [7) Recommended Reliable Producer Configuration (Summary)](#7-recommended-reliable-producer-configuration-summary)
+  - [8) Configuring the Reliable Producer in Spring Boot (Hands-On)](#8-configuring-the-reliable-producer-in-spring-boot-hands-on)
+- [Part 2: Application-Level Error Handling & Retry](#part-2-application-level-error-handling--retry)
+  - [9) Handling Retriable vs Non-Retriable Errors](#9-handling-retriable-vs-non-retriable-errors)
+  - [10) Application-Level Retry (Spring Retry / Custom Logic)](#10-application-level-retry-spring-retry--custom-logic)
+  - [11) Error Handling in Callbacks / CompletableFuture](#11-error-handling-in-callbacks--completablefuture)
+- [Part 3: Reliability Testing](#part-3-reliability-testing)
+  - [12a) Unit Test Hints](#12a-unit-test-hints)
+  - [12b) Integration Test Hints](#12b-integration-test-hints)
 - [Topic Dependency Flow](#topic-dependency-flow)
 - [Mapping to Current Project](#mapping-to-current-project)
 - [Suggested Implementation Order](#suggested-implementation-order)
@@ -38,7 +41,9 @@ Use this in sequence while implementing:
 
 ---
 
-## Reliability Strategy Reference
+## Part 1: Producer Reliability Configuration
+
+These settings are applied in `application.yml` (or via `KafkaProducerConfig`) and form the foundation of a reliable producer. They control how the producer communicates with the broker, how it handles transient failures at the Kafka protocol level, and how it avoids data loss or duplication.
 
 ### 1) Acknowledgment Modes (`acks`)
 
@@ -133,7 +138,7 @@ spring:
 
 **Why it matters**
 - Even with `acks=all`, if only 1 replica is in-sync, the message is effectively only persisted once.
-- Setting `min.insync.replicas=2` ensures at least 2 copies exist before acknowledging.
+- Setting `"min.insync.replicas=2"` ensures at least 2 copies exist before acknowledging.
 
 **Failure behavior**
 - If ISR count drops below `min.insync.replicas`, the broker returns `NotEnoughReplicasException` and the producer retries or fails - this is desired because it prevents under-replicated writes.
@@ -164,28 +169,7 @@ spring:
 
 ---
 
-### 6) Handling Retriable vs Non-Retriable Errors
-
-**Retriable errors**
-- Transient failures where a retry is likely to succeed.
-- `NOT_LEADER_FOR_PARTITION`
-- `REQUEST_TIMED_OUT`
-- `NETWORK_EXCEPTION`
-- `NotEnoughReplicasException`
-
-**Non-retriable errors**
-- Permanent failures where retrying will not help.
-- `MESSAGE_TOO_LARGE`
-- `SERIALIZATION_ERROR`
-- `AUTHORIZATION_FAILED`
-- `TOPIC_AUTHORIZATION_FAILED`
-
-**Application-level handling**
-- In `LibraryEventProducer`, the `whenComplete` callback or `try/catch` (synchronous) should differentiate between these and take appropriate action (for example, log, alert, send to DLQ).
-
----
-
-### 7) Producer Timeouts
+### 6) Producer Timeouts
 
 **Key configs**
 - `delivery.timeout.ms` - Total time for a message to be sent and acknowledged (includes retries). Default: `120000ms`.
@@ -201,55 +185,7 @@ spring:
 
 ---
 
-### 8) Application-Level Retry (Spring Retry / Custom Logic)
-
-**What**
-- In addition to Kafka's built-in producer retries, you can add application-level retry at the controller/service layer.
-
-**Use case**
-- When `send()` future completes exceptionally (for example, after all Kafka retries are exhausted), you may want to retry the entire operation or send to a fallback.
-
-**Options**
-- Spring Retry (`@Retryable` annotation).
-- Manual retry with `CompletableFuture` chaining.
-- Circuit breaker pattern (Resilience4j).
-
-**Why it matters**
-- Kafka retries only handle broker-level transient errors.
-- Application-level retry can handle broader failure scenarios (for example, serialization retry after fix, timeout-based backoff).
-
----
-
-### 9) Error Handling in Callbacks / CompletableFuture
-
-**Async approach** (`whenComplete`)
-```java
-future.whenComplete((result, ex) -> {
-    if (ex != null) {
-        // Log, alert, send to DLQ
-    } else {
-        // Log success with metadata
-    }
-});
-```
-
-**Sync approach** (`.get()`)
-```java
-try {
-    SendResult<Integer, LibraryEvent> result = kafkaTemplate.send(...).get();
-} catch (ExecutionException ex) {
-    // Handle Kafka errors
-} catch (InterruptedException ex) {
-    Thread.currentThread().interrupt();
-}
-```
-
-**Why it matters**
-- Unhandled exceptions in callbacks silently drop errors. Every producer must have explicit error handling.
-
----
-
-### 10) Recommended Reliable Producer Configuration (Summary)
+### 7) Recommended Reliable Producer Configuration (Summary)
 
 The "gold standard" configuration for a reliable Kafka producer:
 
@@ -278,20 +214,348 @@ min.insync.replicas=2
 
 ---
 
-### 11) Testing Reliability
-
-- Unit tests: Mock `KafkaTemplate` to simulate `send()` failures and verify error handling logic.
-- Integration tests: Use `EmbeddedKafka` to test actual produce-and-consume flows.
-- Failure injection: Simulate broker unavailability, slow networks, and serialization errors to validate retry behavior and error handling.
-
----
-
-### 12) Configuring the Reliable Producer in Spring Boot (Hands-On)
+### 8) Configuring the Reliable Producer in Spring Boot (Hands-On)
 
 - Walk through updating `application.yml` with the reliable config.
 - Demonstrate the behavior difference between `acks=1` and `acks=all`.
 - Show how `min.insync.replicas` interacts with `acks=all`.
 - Show producer logs when retries happen.
+
+---
+
+## Part 2: Application-Level Error Handling & Retry
+
+Once the config-level reliability is in place, the next layer is application-level error handling. This group covers how to classify errors (retriable vs non-retriable), how to manually retry via `CompletableFuture` chaining, and how to implement callbacks that respond to producer failures.
+
+### 9) Handling Retriable vs Non-Retriable Errors
+
+**Retriable errors**
+- Transient failures where a retry is likely to succeed.
+- `NOT_LEADER_FOR_PARTITION`
+- `REQUEST_TIMED_OUT`
+- `NETWORK_EXCEPTION`
+- `NotEnoughReplicasException`
+
+**Non-retriable errors**
+- Permanent failures where retrying will not help.
+- `MESSAGE_TOO_LARGE`
+- `SERIALIZATION_ERROR`
+- `AUTHORIZATION_FAILED`
+- `TOPIC_AUTHORIZATION_FAILED`
+
+**Application-level handling**
+- In `LibraryEventProducer`, the `whenComplete` callback or `try/catch` (synchronous) should differentiate between these and take appropriate action (for example, log, alert, send to DLQ).
+
+**Code example — classify error in `whenComplete`**
+```java
+// In LibraryEventProducer
+future.whenComplete((result, ex) -> {
+    if (ex != null) {
+        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+        if (cause instanceof RetriableException) {
+            logger.warn("Retriable error — Kafka built-in retries will handle this. key={}", key, ex);
+        } else {
+            logger.error("Non-retriable error — escalating. key={} event={}", key, libraryEvent, ex);
+            // send to DLQ, raise an alert, or return a failure response
+        }
+        return;
+    }
+    logger.info("Published library event. topic={} partition={} offset={} key={}",
+            result.getRecordMetadata().topic(),
+            result.getRecordMetadata().partition(),
+            result.getRecordMetadata().offset(),
+            key);
+});
+```
+
+> `RetriableException` is from `org.apache.kafka.common.errors.RetriableException`. All Kafka retriable errors extend it, so a single `instanceof` check covers the full retriable category.
+
+---
+
+### 10) Application-Level Retry (Spring Retry / Custom Logic)
+
+**What**
+- In addition to Kafka's built-in producer retries, you can add application-level retry at the controller/service layer.
+
+**Use case**
+- When `send()` future completes exceptionally (for example, after all Kafka retries are exhausted), you may want to retry the entire operation or send to a fallback.
+
+**Options**
+- Spring Retry (`@Retryable` annotation).
+- Manual retry with `CompletableFuture` chaining.
+- Circuit breaker pattern (Resilience4j).
+
+**Why it matters**
+- Kafka retries only handle broker-level transient errors.
+- Application-level retry can handle broader failure scenarios (for example, serialization retry after fix, timeout-based backoff).
+
+**Code example — manual retry with `CompletableFuture` chaining**
+```java
+// In LibraryEventProducer
+public CompletableFuture<SendResult<Integer, LibraryEvent>> sendLibraryEventWithRetry(
+        LibraryEvent libraryEvent, int attemptsLeft) {
+
+    Integer key = libraryEvent.libraryEventId();
+
+    return sendLibraryEvent(libraryEvent)
+            .exceptionallyCompose(ex -> {
+                Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                if (attemptsLeft > 0 && cause instanceof RetriableException) {
+                    logger.warn("Retrying after retriable error. attemptsLeft={} key={}", attemptsLeft, key);
+                    return sendLibraryEventWithRetry(libraryEvent, attemptsLeft - 1);
+                }
+                logger.error("Exhausted retries or non-retriable error. key={}", key, ex);
+                return CompletableFuture.failedFuture(ex);
+            });
+}
+```
+
+**Code example — Spring Retry with `@Retryable`**
+
+Add dependency to `pom.xml`:
+```xml
+<dependency>
+    <groupId>org.springframework.retry</groupId>
+    <artifactId>spring-retry</artifactId>
+</dependency>
+```
+
+Enable in your main application class or config:
+```java
+@EnableRetry
+@SpringBootApplication
+public class LibraryEventsProducerApplication { ... }
+```
+
+Annotate the send method:
+```java
+@Retryable(
+    retryFor = {RetriableException.class},
+    maxAttempts = 3,
+    backoff = @Backoff(delay = 1000, multiplier = 2)
+)
+public CompletableFuture<SendResult<Integer, LibraryEvent>> sendLibraryEvent(LibraryEvent libraryEvent) {
+    // existing send logic
+}
+
+@Recover
+public CompletableFuture<SendResult<Integer, LibraryEvent>> recoverSend(
+        RetriableException ex, LibraryEvent libraryEvent) {
+    logger.error("All retries exhausted. Sending to fallback. event={}", libraryEvent, ex);
+    // send to DLQ or return a failure signal
+    return CompletableFuture.failedFuture(ex);
+}
+```
+
+---
+
+### 11) Error Handling in Callbacks / CompletableFuture
+
+**Async approach** (`whenComplete`) — matches current `LibraryEventProducer`
+```java
+// In LibraryEventProducer.sendLibraryEvent()
+future.whenComplete((result, ex) -> {
+    if (ex != null) {
+        logger.error("Failed to publish library event. key={} event={}", key, libraryEvent, ex);
+        return;
+    }
+    logger.info(
+            "Published library event. topic={} partition={} offset={} key={} event={}",
+            result.getRecordMetadata().topic(),
+            result.getRecordMetadata().partition(),
+            result.getRecordMetadata().offset(),
+            key,
+            libraryEvent);
+});
+```
+
+**Sync approach** (`.get()`) — matches current `LibraryEventProducer.sendLibraryEventSynchronous()`
+```java
+try {
+    SendResult<Integer, LibraryEvent> result =
+            key == null
+                    ? kafkaTemplate.send(topicName, libraryEvent).get()
+                    : kafkaTemplate.send(topicName, key, libraryEvent).get();
+
+    logger.info("Published library event synchronously. topic={} partition={} offset={} key={}",
+            result.getRecordMetadata().topic(),
+            result.getRecordMetadata().partition(),
+            result.getRecordMetadata().offset(),
+            key);
+
+    return result;
+} catch (ExecutionException ex) {
+    logger.error("Failed to publish library event synchronously. key={} event={}", key, libraryEvent, ex);
+    throw ex;
+} catch (InterruptedException ex) {
+    Thread.currentThread().interrupt();
+    throw ex;
+}
+```
+
+**Why it matters**
+- Unhandled exceptions in callbacks silently drop errors. Every producer must have explicit error handling.
+
+---
+
+## Part 3: Reliability Testing
+
+With config and error-handling code in place, this part focuses on proving correctness. Tests are split into two separate concerns: unit tests that verify error classification logic in isolation, and integration tests that verify the full produce-to-Kafka lifecycle using a real (embedded) broker.
+
+---
+
+### 12a) Unit Test Hints
+
+Unit tests use `@ExtendWith(MockitoExtension.class)` and mock `KafkaTemplate`. No Spring context is started. They run fast and are focused on the error-handling logic inside `LibraryEventProducer`.
+
+**What to test**
+- Happy path: `send()` with a null key calls `kafkaTemplate.send(topic, event)`; with a non-null key calls `kafkaTemplate.send(topic, key, event)`.
+- Failure path: when `KafkaTemplate.send()` returns a failed future, the returned `CompletableFuture` completes exceptionally.
+- Error classification: verify that a `NetworkException` cause `isInstanceOf(RetriableException.class)` and a `RecordTooLargeException` cause `isNotInstanceOf(RetriableException.class)`.
+- Synchronous path: `sendLibraryEventSynchronous()` rethrows the underlying exception on failure.
+
+**Skeleton**
+```java
+@ExtendWith(MockitoExtension.class)
+class LibraryEventProducerTest {
+
+    @Mock
+    KafkaTemplate<Integer, LibraryEvent> kafkaTemplate;
+
+    @InjectMocks
+    LibraryEventProducer producer;
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(producer, "topicName", "library-events");
+    }
+
+    // --- Happy path ---
+
+    @Test
+    void sendLibraryEvent_withNullKey_callsSendWithoutKey() {
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, someBook());
+        when(kafkaTemplate.send(eq("library-events"), eq(event)))
+                .thenReturn(CompletableFuture.completedFuture(buildSendResult(null, event)));
+
+        CompletableFuture<SendResult<Integer, LibraryEvent>> future = producer.sendLibraryEvent(event);
+
+        assertThat(future.isDone()).isTrue();
+        verify(kafkaTemplate).send("library-events", event);
+    }
+
+    // --- Failure path — retriable ---
+
+    @Test
+    void sendLibraryEvent_withNetworkException_causeIsRetriable() {
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, someBook());
+        CompletableFuture<SendResult<Integer, LibraryEvent>> failed = new CompletableFuture<>();
+        failed.completeExceptionally(new NetworkException("broker unreachable"));
+        when(kafkaTemplate.send(eq("library-events"), eq(event))).thenReturn(failed);
+
+        CompletableFuture<SendResult<Integer, LibraryEvent>> future = producer.sendLibraryEvent(event);
+
+        assertThat(future.isCompletedExceptionally()).isTrue();
+        Throwable thrown = catchThrowable(future::get);
+        assertThat(thrown.getCause())
+                .isInstanceOf(NetworkException.class)
+                .isInstanceOf(RetriableException.class);
+    }
+
+    // --- Failure path — non-retriable ---
+
+    @Test
+    void sendLibraryEvent_withRecordTooLargeException_causeIsNotRetriable() {
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, someBook());
+        CompletableFuture<SendResult<Integer, LibraryEvent>> failed = new CompletableFuture<>();
+        failed.completeExceptionally(new RecordTooLargeException("message too large"));
+        when(kafkaTemplate.send(eq("library-events"), eq(event))).thenReturn(failed);
+
+        CompletableFuture<SendResult<Integer, LibraryEvent>> future = producer.sendLibraryEvent(event);
+
+        assertThat(future.isCompletedExceptionally()).isTrue();
+        Throwable thrown = catchThrowable(future::get);
+        assertThat(thrown.getCause())
+                .isInstanceOf(RecordTooLargeException.class)
+                .isNotInstanceOf(RetriableException.class);
+    }
+}
+```
+
+> See `LibraryEventProducerTest` in `src/test` for the full implementation.
+
+---
+
+### 12b) Integration Test Hints
+
+Integration tests use `@SpringBootTest` + `@EmbeddedKafka`. The full Spring context starts with a real (in-process) Kafka broker. No mocking — the actual `KafkaTemplate` sends to the embedded broker.
+
+**What to test**
+- HTTP response: POST returns `201 Created`; PUT returns `202 Accepted`.
+- Validation rejections: null book, blank book name, wrong event type all return `400 Bad Request`.
+- Kafka message delivery: after a successful POST or PUT, a consumer reading from the embedded broker finds the record with the correct key and payload.
+
+**Key setup**
+```java
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureMockMvc
+@EmbeddedKafka(partitions = 1, topics = "library-events")
+@TestPropertySource(properties = {
+        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
+        "library.events.topic=library-events"
+})
+class LibraryEventsControllerIntegrationTest {
+
+    @Autowired MockMvc mockMvc;
+    @Autowired EmbeddedKafkaBroker embeddedKafkaBroker;
+}
+```
+
+**Kafka message delivery hint — what the consumer setup looks like**
+```java
+// 1. Send the event via HTTP
+mockMvc.perform(post("/v1/library-events")
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(objectMapper.writeValueAsString(event)))
+        .andExpect(status().isCreated());
+
+// 2. Create a consumer that reads from the beginning of the topic
+//    Use a unique group ID per test so each consumer starts at offset 0
+Consumer<Integer, String> consumer = createTestConsumer("verify-post-" + System.nanoTime());
+embeddedKafkaBroker.consumeFromAnEmbeddedTopic(consumer, "library-events");
+
+// 3. Poll in a loop until the record is found or the timeout expires
+//    Use unique book content per test to identify the right record
+ConsumerRecord<Integer, String> found = waitForRecord(consumer, "My Unique Book Title", Duration.ofSeconds(5));
+assertThat(found).isNotNull();
+assertThat(found.key()).isNull();             // ADD event — no key
+assertThat(found.value()).contains("\"ADD\"");
+consumer.close();
+```
+
+**Why `earliest` + unique content?**
+- The producer send is async — the HTTP 201 can return before the record reaches the broker.
+- Reading from `earliest` ensures the record is found even if it arrives slightly after the consumer starts.
+- Using unique book titles per test avoids false positives from records produced by other tests in the same topic.
+
+**`waitForRecord` helper pattern**
+```java
+private ConsumerRecord<Integer, String> waitForRecord(
+        Consumer<Integer, String> consumer, String contentContains, Duration timeout) {
+    long deadline = System.currentTimeMillis() + timeout.toMillis();
+    while (System.currentTimeMillis() < deadline) {
+        ConsumerRecords<Integer, String> records = consumer.poll(Duration.ofMillis(500));
+        for (ConsumerRecord<Integer, String> record : records) {
+            if (record.value().contains(contentContains)) {
+                return record;
+            }
+        }
+    }
+    return null;  // timed out — test will fail on assertThat(found).isNotNull()
+}
+```
+
+> See `LibraryEventsControllerIntegrationTest` in `src/test` for the full implementation.
 
 ---
 
@@ -339,11 +603,11 @@ Error Handling (Callback) --> Graceful Failure / DLQ / Alert
 3. Retries and retry backoff - Define behavior for transient failures.
 4. Idempotent producer - Prevent duplicates from retries.
 5. `max.in.flight.requests` - Confirm ordering guarantees.
-6. Retriable vs non-retriable errors - Implement correct handling paths.
-7. Producer timeouts - Tune timing behavior.
-8. Error handling in callbacks - Implement application-level response.
-9. Application-level retry - Add resilience beyond Kafka built-in retries.
-10. Recommended config - Consolidate final producer settings.
+6. Producer timeouts - Tune timing behavior.
+7. Recommended config - Consolidate final producer settings.
+8. Retriable vs non-retriable errors - Implement correct handling paths.
+9. Error handling in callbacks - Implement application-level response.
+10. Application-level retry - Add resilience beyond Kafka built-in retries.
 11. Testing reliability - Prove behavior under failure modes.
 12. Hands-on walkthrough - Apply all settings to Library Events Producer.
 

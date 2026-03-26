@@ -6,6 +6,9 @@ import com.learnkafka.domain.LibraryEventType;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.NetworkException;
+import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.RetriableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,6 +26,7 @@ import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -229,6 +233,98 @@ class LibraryEventProducerTest {
         // When / Then
         assertThatThrownBy(() -> libraryEventProducer.sendLibraryEventSynchronous(event))
                 .isInstanceOf(Exception.class);
+    }
+
+    // -----------------------------------------------------------------------
+    // Error classification — Retriable vs Non-Retriable
+    // -----------------------------------------------------------------------
+
+    @Test
+    @DisplayName("sendLibraryEvent: NetworkException (retriable) — future completes exceptionally and cause is a RetriableException")
+    void sendLibraryEvent_withNetworkException_causeIsRetriable() {
+        // Given
+        Book book = new Book(9, "Kafka: The Definitive Guide", "Neha Narkhede");
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, book);
+
+        CompletableFuture<SendResult<Integer, LibraryEvent>> failedFuture = new CompletableFuture<>();
+        failedFuture.completeExceptionally(new NetworkException("Broker unreachable"));
+        when(kafkaTemplate.send(eq(TOPIC), eq(event))).thenReturn(failedFuture);
+
+        // When
+        CompletableFuture<SendResult<Integer, LibraryEvent>> future = libraryEventProducer.sendLibraryEvent(event);
+
+        // Then
+        assertThat(future.isCompletedExceptionally()).isTrue();
+        Throwable thrown = catchThrowable(future::get);
+        assertThat(thrown).isInstanceOf(ExecutionException.class);
+        assertThat(thrown.getCause())
+                .isInstanceOf(NetworkException.class)
+                .isInstanceOf(RetriableException.class);  // NetworkException extends RetriableException
+    }
+
+    @Test
+    @DisplayName("sendLibraryEvent: RecordTooLargeException (non-retriable) — future completes exceptionally and cause is NOT a RetriableException")
+    void sendLibraryEvent_withRecordTooLargeException_causeIsNotRetriable() {
+        // Given
+        Book book = new Book(10, "The Art of Computer Programming", "Donald Knuth");
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, book);
+
+        CompletableFuture<SendResult<Integer, LibraryEvent>> failedFuture = new CompletableFuture<>();
+        failedFuture.completeExceptionally(new RecordTooLargeException("Message exceeds max.request.size"));
+        when(kafkaTemplate.send(eq(TOPIC), eq(event))).thenReturn(failedFuture);
+
+        // When
+        CompletableFuture<SendResult<Integer, LibraryEvent>> future = libraryEventProducer.sendLibraryEvent(event);
+
+        // Then
+        assertThat(future.isCompletedExceptionally()).isTrue();
+        Throwable thrown = catchThrowable(future::get);
+        assertThat(thrown).isInstanceOf(ExecutionException.class);
+        assertThat(thrown.getCause())
+                .isInstanceOf(RecordTooLargeException.class)
+                .isNotInstanceOf(RetriableException.class);  // RecordTooLargeException does NOT extend RetriableException
+    }
+
+    @Test
+    @DisplayName("sendLibraryEventSynchronous: NetworkException (retriable) — rethrows and cause is a RetriableException")
+    void sendLibraryEventSynchronous_withNetworkException_rethrowsRetriableCause() {
+        // Given
+        Book book = new Book(11, "Building Microservices", "Sam Newman");
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, book);
+
+        CompletableFuture<SendResult<Integer, LibraryEvent>> failedFuture = new CompletableFuture<>();
+        failedFuture.completeExceptionally(new NetworkException("Connection refused"));
+        when(kafkaTemplate.send(eq(TOPIC), eq(event))).thenReturn(failedFuture);
+
+        // When
+        Throwable thrown = catchThrowable(() -> libraryEventProducer.sendLibraryEventSynchronous(event));
+
+        // Then
+        assertThat(thrown).isInstanceOf(ExecutionException.class);
+        assertThat(thrown.getCause())
+                .isInstanceOf(NetworkException.class)
+                .isInstanceOf(RetriableException.class);
+    }
+
+    @Test
+    @DisplayName("sendLibraryEventSynchronous: RecordTooLargeException (non-retriable) — rethrows and cause is NOT a RetriableException")
+    void sendLibraryEventSynchronous_withRecordTooLargeException_rethrowsNonRetriableCause() {
+        // Given
+        Book book = new Book(12, "Domain-Driven Design", "Eric Evans");
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, book);
+
+        CompletableFuture<SendResult<Integer, LibraryEvent>> failedFuture = new CompletableFuture<>();
+        failedFuture.completeExceptionally(new RecordTooLargeException("Record too large"));
+        when(kafkaTemplate.send(eq(TOPIC), eq(event))).thenReturn(failedFuture);
+
+        // When
+        Throwable thrown = catchThrowable(() -> libraryEventProducer.sendLibraryEventSynchronous(event));
+
+        // Then
+        assertThat(thrown).isInstanceOf(ExecutionException.class);
+        assertThat(thrown.getCause())
+                .isInstanceOf(RecordTooLargeException.class)
+                .isNotInstanceOf(RetriableException.class);
     }
 }
 

@@ -30,3 +30,7 @@ spring:
         spring.json.trusted.packages: com.learnkafka.dto,com.learnkafka.domain
         spring.json.value.default.type: com.learnkafka.dto.LibraryEventDto
         spring.json.type.mapping: com.learnkafka.domain.LibraryEvent:com.learnkafka.dto.LibraryEventDto
+
+retry:
+  scheduler:
+    fixed-rate: 10000   # ms — how often to retry OPEN failure records

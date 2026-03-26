@@ -3,6 +3,12 @@ package com.learnkafka.controller;
 import com.learnkafka.domain.Book;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.domain.LibraryEventType;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.common.serialization.IntegerDeserializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,11 +16,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -41,6 +55,9 @@ class LibraryEventsControllerIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private EmbeddedKafkaBroker embeddedKafkaBroker;
 
     private Book validBook;
     private LibraryEvent validAddEvent;
@@ -464,5 +481,93 @@ class LibraryEventsControllerIntegrationTest {
                 .andExpect(jsonPath("$.book.bookId").value(99))
                 .andExpect(jsonPath("$.book.bookName").value("Updated Book Title"))
                 .andExpect(jsonPath("$.book.bookAuthor").value("Updated Author"));
+    }
+
+    // ==================== Kafka Message Delivery Verification ====================
+
+    @Test
+    @DisplayName("Integration: POST ADD event — message is physically published to Kafka with correct payload")
+    void testPostLibraryEvent_MessagePhysicallyPublishedToKafka() throws Exception {
+        // Use unique book data so we can identify this test's record among all messages in the topic
+        Book uniqueBook = new Book(501, "Unique POST Test Book", "Test Author POST");
+        LibraryEvent event = new LibraryEvent(null, LibraryEventType.ADD, uniqueBook);
+
+        // Act: send the event (producer is async — message may still be in flight)
+        mockMvc.perform(post("/v1/library-events")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(event)))
+                .andExpect(status().isCreated());
+
+        // Assert: create a consumer that reads from the beginning and search for our record
+        Consumer<Integer, String> consumer = createTestConsumer("it-post-" + System.nanoTime());
+        embeddedKafkaBroker.consumeFromAnEmbeddedTopic(consumer, "library-events"); // seeks to beginning
+
+        ConsumerRecord<Integer, String> found = waitForRecord(consumer, "Unique POST Test Book", Duration.ofSeconds(5));
+        assertThat(found).as("Expected ADD event to be published to Kafka within 5 seconds").isNotNull();
+        assertThat(found.topic()).isEqualTo("library-events");
+        assertThat(found.key()).isNull();            // ADD event has no key
+        assertThat(found.value()).contains("\"ADD\"");
+
+        consumer.close();
+    }
+
+    @Test
+    @DisplayName("Integration: PUT UPDATE event — message is physically published to Kafka with correct key and payload")
+    void testPutLibraryEvent_MessagePhysicallyPublishedToKafka() throws Exception {
+        // Use unique book data to distinguish this record from other tests
+        Book uniqueBook = new Book(502, "Unique PUT Test Book", "Test Author PUT");
+        LibraryEvent updateEvent = new LibraryEvent(77, LibraryEventType.UPDATE, uniqueBook);
+
+        // Act
+        mockMvc.perform(put("/v1/library-events/{libraryEventId}", 77)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updateEvent)))
+                .andExpect(status().isAccepted());
+
+        // Assert
+        Consumer<Integer, String> consumer = createTestConsumer("it-put-" + System.nanoTime());
+        embeddedKafkaBroker.consumeFromAnEmbeddedTopic(consumer, "library-events"); // seeks to beginning
+
+        ConsumerRecord<Integer, String> found = waitForRecord(consumer, "Unique PUT Test Book", Duration.ofSeconds(5));
+        assertThat(found).as("Expected UPDATE event to be published to Kafka within 5 seconds").isNotNull();
+        assertThat(found.topic()).isEqualTo("library-events");
+        assertThat(found.key()).isEqualTo(77);       // UPDATE event uses libraryEventId as key
+        assertThat(found.value()).contains("\"UPDATE\"");
+
+        consumer.close();
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Polls the consumer until a record whose value contains {@code contentContains} is found,
+     * or the timeout expires. Reading from the beginning ensures we don't miss records produced
+     * just before the consumer was created.
+     */
+    private ConsumerRecord<Integer, String> waitForRecord(
+            Consumer<Integer, String> consumer, String contentContains, Duration timeout) {
+        long deadline = System.currentTimeMillis() + timeout.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            ConsumerRecords<Integer, String> records = consumer.poll(Duration.ofMillis(500));
+            for (ConsumerRecord<Integer, String> record : records) {
+                if (record.value().contains(contentContains)) {
+                    return record;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Consumer<Integer, String> createTestConsumer(String groupId) {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, embeddedKafkaBroker.getBrokersAsString());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, IntegerDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        return new DefaultKafkaConsumerFactory<Integer, String>(props).createConsumer();
     }
 }
