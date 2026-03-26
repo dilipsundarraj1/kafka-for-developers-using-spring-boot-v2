@@ -7,6 +7,8 @@ It keeps the same technical content, but organizes it in an implementation-first
 ## Table of Contents
 
 - [How to Use This Reference](#how-to-use-this-reference)
+- [Topic Dependency Flow](#topic-dependency-flow)
+- [Mapping to Current Project](#mapping-to-current-project)
 - [Part 1: Producer Reliability Configuration](#part-1-producer-reliability-configuration)
   - [1) Acknowledgment Modes (`acks`)](#1-acknowledgment-modes-acks)
   - [2) Retries and Retry Backoff](#2-retries-and-retry-backoff)
@@ -23,8 +25,6 @@ It keeps the same technical content, but organizes it in an implementation-first
 - [Part 3: Reliability Testing](#part-3-reliability-testing)
   - [12a) Unit Test Hints](#12a-unit-test-hints)
   - [12b) Integration Test Hints](#12b-integration-test-hints)
-- [Topic Dependency Flow](#topic-dependency-flow)
-- [Mapping to Current Project](#mapping-to-current-project)
 - [Suggested Implementation Order](#suggested-implementation-order)
 - [Implementation Checklist](#implementation-checklist)
 
@@ -38,6 +38,43 @@ Use this in sequence while implementing:
 2. Align broker/topic settings (`min.insync.replicas`, replication factor).
 3. Implement callback and application-level error handling.
 4. Validate behavior with reliability-focused tests.
+
+---
+
+## Topic Dependency Flow
+
+```text
+acks=all  ----------------------\
+                                v
+min.insync.replicas --> Durable Writes (no data loss)
+                                |
+retries + retry.backoff.ms -----|
+                                v
+enable.idempotence ------> No Duplicates from Retries
+                                |
+max.in.flight.requests ---------|
+                                v
+                     Ordered + Deduplicated Messages
+                                |
+delivery.timeout.ms ----------- |
+                                v
+Error Handling (Callback) --> Graceful Failure / DLQ / Alert
+```
+
+---
+
+## Mapping to Current Project
+
+| Topic | Current State | Action Needed |
+|---|---|---|
+| `acks` | Not explicitly set (defaults to `1`) | Set to `all` |
+| `retries` | Not explicitly set (defaults vary) | Explicitly configure |
+| `enable.idempotence` | Not set | Enable explicitly |
+| `min.insync.replicas` | Not configured | Configure on topic/broker |
+| `max.in.flight.requests` | Not set | Confirm default `5` with idempotence |
+| Error handling | Basic `whenComplete` callback | Enhance with retriable vs non-retriable logic |
+| Application-level retry | Not implemented | Add Spring Retry or custom logic |
+| Testing reliability | Basic tests exist | Add failure-injection tests |
 
 ---
 
@@ -556,43 +593,6 @@ private ConsumerRecord<Integer, String> waitForRecord(
 ```
 
 > See `LibraryEventsControllerIntegrationTest` in `src/test` for the full implementation.
-
----
-
-## Topic Dependency Flow
-
-```text
-acks=all  ----------------------\
-                                v
-min.insync.replicas --> Durable Writes (no data loss)
-                                |
-retries + retry.backoff.ms -----|
-                                v
-enable.idempotence ------> No Duplicates from Retries
-                                |
-max.in.flight.requests ---------|
-                                v
-                     Ordered + Deduplicated Messages
-                                |
-delivery.timeout.ms ----------- |
-                                v
-Error Handling (Callback) --> Graceful Failure / DLQ / Alert
-```
-
----
-
-## Mapping to Current Project
-
-| Topic | Current State | Action Needed |
-|---|---|---|
-| `acks` | Not explicitly set (defaults to `1`) | Set to `all` |
-| `retries` | Not explicitly set (defaults vary) | Explicitly configure |
-| `enable.idempotence` | Not set | Enable explicitly |
-| `min.insync.replicas` | Not configured | Configure on topic/broker |
-| `max.in.flight.requests` | Not set | Confirm default `5` with idempotence |
-| Error handling | Basic `whenComplete` callback | Enhance with retriable vs non-retriable logic |
-| Application-level retry | Not implemented | Add Spring Retry or custom logic |
-| Testing reliability | Basic tests exist | Add failure-injection tests |
 
 ---
 
