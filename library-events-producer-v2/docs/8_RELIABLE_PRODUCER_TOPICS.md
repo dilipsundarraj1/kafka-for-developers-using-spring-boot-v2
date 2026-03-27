@@ -582,55 +582,108 @@ future.whenComplete((result, ex) -> {
 
 ---
 
-### 10) Application-Level Retry (Spring Retry / Custom Logic)
+### 10) Application-Level Error Handling
 
 **What**
-- In addition to Kafka's built-in producer retries, you can add application-level retry at the controller/service layer.
-
-**Use case**
-- When `send()` future completes exceptionally (for example, after all Kafka retries are exhausted), you may want to retry the entire operation or send to a fallback.
-
-**Options**
-- Spring Retry (`@Retryable` annotation).
-- Manual retry with `CompletableFuture` chaining.
-- Circuit breaker pattern (Resilience4j).
+- In addition to Kafka's built-in producer retries, the application layer should handle errors that surface after all Kafka retries are exhausted — such as logging, alerting, or routing to a fallback.
 
 **Why it matters**
-- Kafka retries only handle broker-level transient errors.
-- Application-level retry can handle broader failure scenarios (for example, serialization retry after fix, timeout-based backoff).
+- Kafka retries only handle broker-level transient errors. Once those retries are exhausted, the failed future or exception reaches your code. Without explicit handling, the error is silently swallowed.
 
-**Code example — manual retry with `CompletableFuture` chaining**
+---
+
+**Async approach — `whenComplete`**
+
+Used when calling `sendLibraryEvent()`. The callback fires after Kafka's internal retries are finished, whether the send succeeded or failed.
+
 ```java
-// In LibraryEventProducer
-public CompletableFuture<SendResult<Integer, LibraryEvent>> sendLibraryEventWithRetry(
-        LibraryEvent libraryEvent, int attemptsLeft) {
-
+// In LibraryEventProducer.sendLibraryEvent()
+public CompletableFuture<SendResult<Integer, LibraryEvent>> sendLibraryEvent(LibraryEvent libraryEvent) {
     Integer key = libraryEvent.libraryEventId();
+    CompletableFuture<SendResult<Integer, LibraryEvent>> future =
+            key == null
+                    ? kafkaTemplate.send(topicName, libraryEvent)
+                    : kafkaTemplate.send(topicName, key, libraryEvent);
 
-    return sendLibraryEvent(libraryEvent)
-            .exceptionallyCompose(ex -> {
-                Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
-                if (attemptsLeft > 0 && cause instanceof RetriableException) {
-                    logger.warn("Retrying after retriable error. attemptsLeft={} key={}", attemptsLeft, key);
-                    return sendLibraryEventWithRetry(libraryEvent, attemptsLeft - 1);
-                }
-                logger.error("Exhausted retries or non-retriable error. key={}", key, ex);
-                return CompletableFuture.failedFuture(ex);
-            });
+    future.whenComplete((result, ex) -> {
+        if (ex != null) {
+            // All Kafka retries exhausted — handle at application level
+            Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+            if (cause instanceof RetriableException) {
+                // Retriable but retries exhausted — alert or send to DLQ
+                logger.error("Retriable error exhausted all retries. key={} event={}", key, libraryEvent, ex);
+            } else {
+                // Non-retriable — log and escalate immediately
+                logger.error("Non-retriable error. key={} event={}", key, libraryEvent, ex);
+            }
+            return;
+        }
+        logger.info("Published library event. topic={} partition={} offset={} key={} event={}",
+                result.getRecordMetadata().topic(),
+                result.getRecordMetadata().partition(),
+                result.getRecordMetadata().offset(),
+                key,
+                libraryEvent);
+    });
+
+    return future;
 }
 ```
 
-**Code example — Spring Retry with `@Retryable`**
+---
 
-Add dependency to `pom.xml`:
-```xml
-<dependency>
-    <groupId>org.springframework.retry</groupId>
-    <artifactId>spring-retry</artifactId>
-</dependency>
+**Sync approach — `.get()` with `try/catch`**
+
+Used when calling `sendLibraryEventSynchronous()`. Errors are caught at the call site, giving the caller control over how to respond.
+
+```java
+// In LibraryEventProducer.sendLibraryEventSynchronous()
+public SendResult<Integer, LibraryEvent> sendLibraryEventSynchronous(LibraryEvent libraryEvent)
+        throws Exception {
+    Integer key = libraryEvent.libraryEventId();
+    try {
+        SendResult<Integer, LibraryEvent> result =
+                key == null
+                        ? kafkaTemplate.send(topicName, libraryEvent).get()
+                        : kafkaTemplate.send(topicName, key, libraryEvent).get();
+
+        logger.info("Published library event synchronously. topic={} partition={} offset={} key={}",
+                result.getRecordMetadata().topic(),
+                result.getRecordMetadata().partition(),
+                result.getRecordMetadata().offset(),
+                key);
+        return result;
+
+    } catch (ExecutionException ex) {
+        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+        if (cause instanceof RetriableException) {
+            // Retriable but retries exhausted — alert or send to DLQ
+            logger.error("Retriable error exhausted all retries. key={} event={}", key, libraryEvent, ex);
+        } else {
+            // Non-retriable — log and escalate immediately
+            logger.error("Non-retriable error. key={} event={}", key, libraryEvent, ex);
+        }
+        throw ex;
+
+    } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw ex;
+    }
+}
 ```
 
-Enable in your main application class or config:
+---
+
+**Bonus — Spring Retry with `@Retryable`**
+
+Spring Retry adds a declarative retry layer on top of the method call — useful when you want to retry the entire `send()` operation at the application level, independent of Kafka's built-in retries.
+
+Add the dependency to `build.gradle`:
+```groovy
+implementation 'org.springframework.retry:spring-retry'
+```
+
+Enable on the main application class:
 ```java
 @EnableRetry
 @SpringBootApplication
@@ -651,11 +704,13 @@ public CompletableFuture<SendResult<Integer, LibraryEvent>> sendLibraryEvent(Lib
 @Recover
 public CompletableFuture<SendResult<Integer, LibraryEvent>> recoverSend(
         RetriableException ex, LibraryEvent libraryEvent) {
-    logger.error("All retries exhausted. Sending to fallback. event={}", libraryEvent, ex);
-    // send to DLQ or return a failure signal
+    logger.error("All Spring Retry attempts exhausted. event={}", libraryEvent, ex);
+    // send to DLQ or surface an error response
     return CompletableFuture.failedFuture(ex);
 }
 ```
+
+> `@Recover` is called automatically when all `@Retryable` attempts are exhausted. The method signature must match the return type and include the exception as the first parameter.
 
 ---
 
