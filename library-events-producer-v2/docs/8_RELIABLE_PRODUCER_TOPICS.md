@@ -556,30 +556,6 @@ Once the config-level reliability is in place, the next layer is application-lev
 **Application-level handling**
 - In `LibraryEventProducer`, the `whenComplete` callback or `try/catch` (synchronous) should differentiate between these and take appropriate action (for example, log, alert, send to DLQ).
 
-**Code example — classify error in `whenComplete`**
-```java
-// In LibraryEventProducer
-future.whenComplete((result, ex) -> {
-    if (ex != null) {
-        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
-        if (cause instanceof RetriableException) {
-            logger.warn("Retriable error — Kafka built-in retries will handle this. key={}", key, ex);
-        } else {
-            logger.error("Non-retriable error — escalating. key={} event={}", key, libraryEvent, ex);
-            // send to DLQ, raise an alert, or return a failure response
-        }
-        return;
-    }
-    logger.info("Published library event. topic={} partition={} offset={} key={}",
-            result.getRecordMetadata().topic(),
-            result.getRecordMetadata().partition(),
-            result.getRecordMetadata().offset(),
-            key);
-});
-```
-
-> `RetriableException` is from `org.apache.kafka.common.errors.RetriableException`. All Kafka retriable errors extend it, so a single `instanceof` check covers the full retriable category.
-
 ---
 
 ### 10) Application-Level Error Handling
