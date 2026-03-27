@@ -120,11 +120,11 @@ Producer → sends message M1 → Leader (Broker 1) writes to log
 
 **Trade-offs**
 
-| Setting | Throughput | Latency | Durability |
-|---|---|---|---|
-| `acks=0` | Highest | Lowest | None — messages can be lost |
-| `acks=1` | High | Low | Partial — leader crash can lose data |
-| `acks=all` | Lower | Higher | Full — survives leader failure |
+| Setting | Throughput | Latency | Durability | Example Use Case |
+|---|---|---|---|---|
+| `acks=0` | Highest | Lowest | None — messages can be lost | Retail: logging every product page view or homepage impression during a flash sale — losing a few view counts is acceptable, and throughput must keep up with thousands of events per second |
+| `acks=1` | High | Low | Partial — leader crash can lose data | Clickstream or user activity tracking where losing a small number of events under failure is tolerable |
+| `acks=all` | Lower | Higher | Full — survives leader failure | Financial transactions, order events, or any domain where every message must be durably persisted |
 
 **Common pitfall**
 - Setting `acks=all` alone is not enough. If `min.insync.replicas=1`, the broker only requires one replica (the leader itself) to acknowledge. You must set `min.insync.replicas=2` alongside `acks=all` to get true durability (see Section 4).
