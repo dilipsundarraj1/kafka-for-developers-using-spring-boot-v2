@@ -92,6 +92,43 @@ These settings are applied in `application.yml` (or via `KafkaProducerConfig`) a
 - `acks=1` - Leader acknowledgment only (default); message is written to the leader's log.
 - `acks=all` (`-1`) - All in-sync replicas (ISR) must acknowledge (slowest, most reliable).
 
+**How it works internally**
+- When the producer calls `send()`, the message is placed in an internal buffer and then sent to the partition leader on the broker.
+- With `acks=1`, the leader writes the message to its local log and immediately sends an acknowledgment back to the producer. The followers replicate asynchronously — if the leader crashes before replication completes, the message is lost.
+- With `acks=all`, the leader waits until all replicas in the ISR have written the message to their logs before acknowledging. This guarantees the message survives a leader failure because at least one follower has the message.
+- The ISR (In-Sync Replicas) is the set of replicas that are fully caught up with the leader. A replica falls out of the ISR if it lags behind by more than `replica.lag.time.max.ms`.
+
+**Data loss scenario with `acks=1`**
+```text
+Producer → sends message M1 → Leader (Broker 1) writes to log → ACK sent to producer ✓
+                                      ↓ replication in progress...
+                               Broker 1 crashes before replication completes
+                               Broker 2 elected as new leader (does NOT have M1)
+                               M1 is permanently lost
+```
+
+**No data loss with `acks=all`**
+```text
+Producer → sends message M1 → Leader (Broker 1) writes to log
+                               Follower (Broker 2) writes to log
+                               Follower (Broker 3) writes to log
+                               All ISR replicas confirmed → ACK sent to producer ✓
+                               Broker 1 crashes
+                               Broker 2 elected as new leader (already has M1)
+                               M1 is safe
+```
+
+**Trade-offs**
+
+| Setting | Throughput | Latency | Durability |
+|---|---|---|---|
+| `acks=0` | Highest | Lowest | None — messages can be lost |
+| `acks=1` | High | Low | Partial — leader crash can lose data |
+| `acks=all` | Lower | Higher | Full — survives leader failure |
+
+**Common pitfall**
+- Setting `acks=all` alone is not enough. If `min.insync.replicas=1`, the broker only requires one replica (the leader itself) to acknowledge. You must set `min.insync.replicas=2` alongside `acks=all` to get true durability (see Section 4).
+
 **Why it matters**
 - `acks=all` is required for a reliable producer. Without it, data can be lost if the leader crashes before replicating.
 
@@ -115,6 +152,21 @@ spring:
 - `retry.backoff.ms` - Delay between retries (default: `100ms`).
 - `delivery.timeout.ms` - Upper bound on total time for a send (including retries). Default: `120000ms` (2 minutes).
 
+**How it works internally**
+- When `send()` fails with a retriable error, the producer does not immediately return a failure to the application. Instead, it waits `retry.backoff.ms` and re-sends the same message to the broker.
+- The retry loop continues until either the send succeeds, the `retries` count is exhausted, or `delivery.timeout.ms` is exceeded — whichever comes first.
+- Between retries, the producer refreshes its metadata to discover the new leader for the partition.
+- The retry is transparent to the application — the `CompletableFuture` returned by `kafkaTemplate.send()` only completes (successfully or exceptionally) after all retries are finished.
+
+**Retry timeline**
+```text
+t=0ms     send() called — broker returns NOT_LEADER_FOR_PARTITION
+t=1000ms  retry 1 — broker still in leader election
+t=2000ms  retry 2 — new leader elected, message accepted → ACK ✓
+
+Total time: ~2000ms  (well within delivery.timeout.ms=120000ms)
+```
+
 **Examples of transient broker/network failures**
 - `NOT_LEADER_FOR_PARTITION` - The broker the producer sent to is no longer the leader for that partition (for example, after a leader election due to broker restart or crash). A retry will discover the new leader via metadata refresh.
 - `REQUEST_TIMED_OUT` - The broker did not respond within `request.timeout.ms`. Could be caused by a temporary GC pause, disk I/O spike, or network congestion.
@@ -124,8 +176,12 @@ spring:
 - `UNKNOWN_TOPIC_OR_PARTITION` - The broker's metadata cache has not caught up yet (for example, topic was just created). A retry after metadata refresh resolves it.
 - `CORRUPT_MESSAGE` (CRC check failure) - Rare; caused by transient data corruption during network transmission. A retry sends a fresh copy.
 
+**Common pitfall**
+- Setting `retries` to a high number without also setting `delivery.timeout.ms` appropriately can cause a message to be retried for up to 2 minutes (the default). In high-throughput systems, this can cause the producer buffer to fill up and back-pressure the application.
+- Setting `retry.backoff.ms` too low (for example, `100ms`) during a prolonged broker outage floods the broker with retry requests before it has recovered. A value of `1000ms` is a safer default.
+
 **Why it matters**
-- Retries handle these transient broker/network failures transparently - the producer recovers automatically without application intervention.
+- Retries handle transient broker/network failures transparently — the producer recovers automatically without application intervention.
 
 **Spring Boot config**
 ```yaml
@@ -148,11 +204,35 @@ spring:
 **Key config**
 - `enable.idempotence=true` (default since Kafka 3.0+).
 
+**How it works internally**
+- When idempotence is enabled, the broker assigns each producer a unique **Producer ID (PID)**.
+- Every message the producer sends includes a **sequence number** that increments per partition.
+- If the producer retries a message (because an ACK was lost in transit), the broker detects the duplicate via the PID + sequence number combination and silently discards it — the consumer never sees it twice.
+- Without idempotence, a lost ACK causes the producer to re-send, and the broker writes the message a second time since it has no way to detect the duplicate.
+
+**Duplicate scenario without idempotence**
+```text
+Producer sends M1 (seq=1) → Broker writes M1 → ACK sent → ACK lost in network
+Producer times out → retries M1                → Broker writes M1 again (duplicate!)
+Consumer receives M1 twice ✗
+```
+
+**No duplicate with idempotence**
+```text
+Producer sends M1 (PID=42, seq=1) → Broker writes M1 → ACK sent → ACK lost in network
+Producer times out → retries M1 (PID=42, seq=1)
+Broker sees PID=42, seq=1 already written → discards duplicate → sends ACK ✓
+Consumer receives M1 once ✓
+```
+
 **Implicit requirements**
-- When idempotence is enabled, `acks` is forced to `all`, `retries` is set to `Integer.MAX_VALUE`, and `max.in.flight.requests.per.connection <= 5`.
+- When idempotence is enabled, Kafka automatically enforces: `acks=all`, `retries=Integer.MAX_VALUE`, and `max.in.flight.requests.per.connection <= 5`. If you set conflicting values, Kafka throws a `ConfigException` at startup.
+
+**Common pitfall**
+- Idempotence is **per-session only**. If the producer restarts, it gets a new PID. A message sent just before restart and retried after restart can still be duplicated. For cross-session exactly-once guarantees, Kafka Transactions are required.
 
 **Why it matters**
-- Retries can cause duplicates without idempotence. This guarantees exactly-once per partition semantics at the producer level.
+- Retries can cause duplicates without idempotence. This guarantees exactly-once per partition semantics at the producer level within a single producer session.
 
 **Spring Boot config**
 ```yaml
@@ -173,12 +253,47 @@ spring:
 **Typical value**
 - `min.insync.replicas=2` (with replication factor of 3).
 
+**How it works internally**
+- `min.insync.replicas` is enforced by the **broker**, not the producer. When the producer sends a message with `acks=all`, the leader checks whether the current ISR size meets `min.insync.replicas` before writing.
+- If the ISR size is below the threshold, the broker immediately returns `NotEnoughReplicasException` to the producer instead of writing the message. This is a safety gate — it prevents writing a message that would be under-replicated.
+
+**Safe combinations**
+
+| Replication Factor | `min.insync.replicas` | Broker failures tolerated | Notes |
+|---|---|---|---|
+| 3 | 2 | 1 | Recommended for production |
+| 3 | 3 | 0 | Maximum durability, zero fault tolerance |
+| 3 | 1 | 2 | Same as `acks=1` — not truly safe |
+| 1 | 1 | 0 | Development only |
+
+**Failure scenario**
+```text
+Cluster: 3 brokers, replication.factor=3, min.insync.replicas=2
+
+Broker 2 and Broker 3 restart simultaneously → ISR = {Broker 1} (size=1)
+Producer sends M1 with acks=all
+Broker 1 checks: ISR size (1) < min.insync.replicas (2) → NotEnoughReplicasException
+Producer retries after retry.backoff.ms
+Broker 2 recovers → ISR = {Broker 1, Broker 2} (size=2)
+Producer retries again → write succeeds ✓
+```
+
 **Why it matters**
 - Even with `acks=all`, if only 1 replica is in-sync, the message is effectively only persisted once.
-- Setting `"min.insync.replicas=2"` ensures at least 2 copies exist before acknowledging.
+- Setting `min.insync.replicas=2` with `replication.factor=3` means the cluster can tolerate 1 broker failure with no data loss and no write interruption.
 
-**Failure behavior**
-- If ISR count drops below `min.insync.replicas`, the broker returns `NotEnoughReplicasException` and the producer retries or fails - this is desired because it prevents under-replicated writes.
+**Common pitfall**
+- This is a **broker/topic-level setting** — it is not configured in `application.yml`. Set it when creating the topic or in the broker's `server.properties`:
+```properties
+# server.properties (broker-level default)
+min.insync.replicas=2
+```
+Or per-topic via the Kafka CLI:
+```bash
+kafka-topics.sh --alter --topic library-events \
+  --config min.insync.replicas=2 \
+  --bootstrap-server localhost:9092
+```
 
 ---
 
@@ -190,10 +305,36 @@ spring:
 **Default**
 - `5`.
 
+**How it works internally**
+- The producer can pipeline multiple batches to the broker without waiting for an ACK for each one. This improves throughput by keeping the network pipe full.
+- If `max.in.flight.requests.per.connection=5`, the producer can have 5 batches in transit simultaneously per broker connection.
+- Without idempotence, if batch 1 fails and is retried after batch 2 has already been sent and acknowledged, the broker ends up writing them out of order: M2, M1.
+- With idempotence enabled, the broker uses the PID and sequence numbers to detect and reject out-of-order writes, enforcing correct ordering even with up to 5 in-flight requests.
+
+**Message reordering scenario (without idempotence)**
+```text
+max.in.flight.requests=2, retries enabled, idempotence disabled
+
+Producer sends batch [M1] and [M2] simultaneously
+Broker ACKs [M2] but [M1] fails (network blip)
+Producer retries [M1]
+Broker writes: M2 → M1  ✗  (wrong order)
+```
+
+**With idempotence (ordering guaranteed)**
+```text
+max.in.flight.requests=5, idempotence enabled
+
+Producer sends batches with sequence numbers: M1(seq=1), M2(seq=2), ...M5(seq=5)
+M1 fails → producer retries M1(seq=1)
+Broker sees seq=1 is next expected → writes M1 first, then continues ✓
+```
+
+**When to set it to `1`**
+- If you need strict ordering AND cannot use idempotence (for example, older Kafka versions), set `max.in.flight.requests.per.connection=1`. This forces the producer to wait for an ACK before sending the next batch, eliminating reordering at the cost of throughput.
+
 **Why it matters**
-- With `max.in.flight.requests.per.connection > 1` and retries enabled (without idempotence), messages can arrive out of order at the broker.
-- With idempotence enabled, Kafka guarantees ordering even with up to 5 in-flight requests.
-- Set to `1` for strict ordering without idempotence.
+- With idempotence enabled, the safe and recommended value is `5` — it gives good throughput while guaranteeing order and no duplicates.
 
 **Spring Boot config**
 ```yaml
@@ -208,27 +349,121 @@ spring:
 
 ### 6) Producer Timeouts
 
+**What**
+- A set of configs that control how long the producer waits at different stages of the send pipeline before giving up or retrying.
+
 **Key configs**
 - `delivery.timeout.ms` - Total time for a message to be sent and acknowledged (includes retries). Default: `120000ms`.
-- `request.timeout.ms` - Time the producer waits for a response from the broker for a single request. Default: `30000ms`.
+- `request.timeout.ms` - Time the producer waits for a response from the broker for a single request attempt. Default: `30000ms`.
 - `linger.ms` - Time the producer waits to accumulate a batch before sending. Default: `0ms`.
 - `max.block.ms` - Time the `send()` call blocks waiting for buffer space or metadata. Default: `60000ms`.
 
-**Relationship**
-- `delivery.timeout.ms >= linger.ms + request.timeout.ms`.
+**How they relate — the send pipeline**
+```text
+send() called
+    │
+    ├─► max.block.ms — wait for buffer space and metadata fetch
+    │
+    ▼
+Message batched in producer buffer
+    │
+    ├─► linger.ms — wait to accumulate more messages into the batch
+    │
+    ▼
+Batch sent to broker
+    │
+    ├─► request.timeout.ms — wait for broker ACK for this attempt
+    │         │
+    │         └─► if timeout: retry after retry.backoff.ms
+    │
+    ▼
+ACK received  ─────────────────────────────────────────────────────────┐
+    │                                                                    │
+    └─► delivery.timeout.ms — outer deadline covering ALL of the above ◄┘
+```
 
-**Why it matters**
-- Misconfigured timeouts can cause premature failures or excessively long waits.
+**Relationship constraint**
+- `delivery.timeout.ms >= linger.ms + request.timeout.ms`
+- Violating this causes Kafka to throw a `ConfigException` at startup.
+
+**Common pitfalls**
+- Setting `delivery.timeout.ms` too low causes messages to expire before Kafka's built-in retries have a chance to recover from a transient failure.
+- Setting `linger.ms` too high (for example, `100ms`) improves batch compression and throughput but adds latency to every message — only appropriate for high-throughput, latency-tolerant pipelines.
+- Setting `max.block.ms` too low causes `send()` to throw `TimeoutException` if the broker metadata is briefly unavailable at startup, before the broker is ready.
+
+**Recommended values for the Library Events Producer**
+
+| Config | Recommended | Reason |
+|---|---|---|
+| `delivery.timeout.ms` | `120000` | 2 min outer cap; enough for 10 retries with 1s backoff |
+| `request.timeout.ms` | `30000` | Wait up to 30s for a single broker response |
+| `linger.ms` | `0` | Low-latency API — send immediately |
+| `max.block.ms` | `60000` | Block up to 60s for metadata on startup |
+
+**Spring Boot config**
+```yaml
+spring:
+  kafka:
+    producer:
+      properties:
+        delivery.timeout.ms: 120000
+        request.timeout.ms: 30000
+        linger.ms: 0
+```
 
 ---
 
 ### 7) Recommended Reliable Producer Configuration (Summary)
 
-The "gold standard" configuration for a reliable Kafka producer:
+The "gold standard" configuration for a reliable Kafka producer, combining all the settings from Sections 1–6:
 
 ```yaml
 spring:
   kafka:
+    producer:
+      acks: all                                                          # Section 1 — require all ISR replicas to ACK
+      retries: 10                                                        # Section 2 — retry up to 10 times on transient errors
+      key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true                                         # Section 3 — prevent duplicates from retries
+        max.in.flight.requests.per.connection: 5                         # Section 5 — safe with idempotence; maintains order
+        retry.backoff.ms: 1000                                           # Section 2 — wait 1s between retries
+        delivery.timeout.ms: 120000                                      # Section 6 — 2 min outer deadline
+        request.timeout.ms: 30000                                        # Section 6 — 30s per broker request
+        linger.ms: 0                                                     # Section 6 — send immediately, no batching delay
+```
+
+Combined with broker/topic settings (not in `application.yml`):
+```properties
+replication.factor=3          # 3 copies of each partition across brokers
+min.insync.replicas=2         # Section 4 — at least 2 replicas must ACK before writing
+```
+
+**Why each setting earns its place**
+
+| Setting | Without it | With it |
+|---|---|---|
+| `acks=all` | Message lost if leader crashes before replication | Message survives leader failure |
+| `retries=10` | Transient failures surface as errors to the app | App recovers automatically |
+| `enable.idempotence` | Retries produce duplicate messages | Exactly-once per partition per session |
+| `min.insync.replicas=2` | `acks=all` satisfied by 1 replica (no real safety) | Requires 2 copies before ACK |
+| `max.in.flight=5` | Must set to 1 for ordering without idempotence | Safe at 5 with idempotence |
+| `retry.backoff.ms=1000` | Retries hammer recovering broker immediately | Gives broker time to recover |
+| `delivery.timeout.ms=120000` | Retries may expire before recovery completes | Enough headroom for 10 retries |
+
+---
+
+### 8) Configuring the Reliable Producer in Spring Boot (Hands-On)
+
+**Step 1 — Update `application.yml`**
+
+Add the full reliable producer config under `spring.kafka.producer`:
+
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
     producer:
       acks: all
       retries: 10
@@ -243,20 +478,58 @@ spring:
         linger.ms: 0
 ```
 
-Combined with broker/topic settings:
+**Step 2 — Verify config is applied at startup**
+
+Spring Boot logs the effective Kafka producer config at `DEBUG` level. Enable it temporarily to confirm:
+
+```yaml
+logging:
+  level:
+    org.apache.kafka.clients.producer: DEBUG
 ```
-replication.factor=3
-min.insync.replicas=2
+
+Look for lines like:
+```
+ProducerConfig values:
+  acks = all
+  enable.idempotence = true
+  retries = 10
+  ...
 ```
 
----
+**Step 3 — Observe `acks=1` vs `acks=all` behavior**
 
-### 8) Configuring the Reliable Producer in Spring Boot (Hands-On)
+- With `acks=1`: `send()` completes as soon as the leader writes to its log. Under a rolling broker restart, you may occasionally see messages lost without any error.
+- With `acks=all`: `send()` only completes after all ISR replicas acknowledge. Under a rolling restart, the producer may briefly see `NotEnoughReplicasException` and retry — but no messages are lost.
 
-- Walk through updating `application.yml` with the reliable config.
-- Demonstrate the behavior difference between `acks=1` and `acks=all`.
-- Show how `min.insync.replicas` interacts with `acks=all`.
-- Show producer logs when retries happen.
+**Step 4 — Observe retry logs**
+
+When a broker is temporarily unavailable, you will see log lines like:
+
+```
+WARN  o.a.k.c.p.i.Sender - [Producer ...] Got error produce response with correlation id 5
+      on topic-partition library-events-0, retrying (9 attempts left). Error: NOT_LEADER_FOR_PARTITION
+```
+
+After the retry succeeds:
+```
+INFO  c.l.producer.LibraryEventProducer - Published library event.
+      topic=library-events partition=0 offset=101 key=42
+```
+
+**Step 5 — Set `min.insync.replicas` on the topic**
+
+This cannot be set in `application.yml` — use the Kafka CLI or your Docker Compose setup:
+```bash
+kafka-topics.sh --alter --topic library-events \
+  --config min.insync.replicas=2 \
+  --bootstrap-server localhost:9092
+```
+
+Verify:
+```bash
+kafka-topics.sh --describe --topic library-events --bootstrap-server localhost:9092
+```
 
 ---
 
