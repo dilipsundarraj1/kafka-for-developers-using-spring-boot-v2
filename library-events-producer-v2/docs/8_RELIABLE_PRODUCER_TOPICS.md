@@ -568,6 +568,155 @@ Once the config-level reliability is in place, the next layer is application-lev
 
 ---
 
+Implementation examples for async `whenComplete` and sync `.get()` with `try/catch` are documented in **Section 11: Error Handling in Callbacks / CompletableFuture**.
+
+---
+
+### What To Do With a Failed Record
+
+Once all Kafka retries are exhausted, the error surfaces to your application. At that point you have two real options. This course will log the failed record — both alerting options below are out of scope here but are shown so you know what to implement in production.
+
+---
+
+#### Option 1 — Save the Failed Record to a Database
+
+Persist the failed event to a database so it can be inspected, replayed, or dead-lettered later.
+
+**Implementation steps**
+
+1. **Add a `FailedEvent` entity** to your data model:
+
+```java
+@Entity
+@Table(name = "failed_events")
+public class FailedEvent {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private Integer eventKey;
+
+    @Column(columnDefinition = "TEXT")
+    private String eventPayload;   // serialize LibraryEvent to JSON
+
+    private String errorMessage;
+    private String errorType;      // "RETRIABLE" or "NON_RETRIABLE"
+    private LocalDateTime failedAt;
+    private String status;         // "PENDING_REPLAY", "REPLAYED", "DEAD_LETTERED"
+}
+```
+
+2. **Inject a `FailedEventRepository`** (Spring Data JPA) into `LibraryEventProducer`.
+
+3. **Persist inside the error handler** (`whenComplete` or `catch` block):
+
+```java
+// whenComplete callback
+if (ex != null) {
+    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+    String errorType = (cause instanceof RetriableException) ? "RETRIABLE" : "NON_RETRIABLE";
+
+    // --- Option 1: Save to DB ---
+    FailedEvent failedEvent = new FailedEvent();
+    failedEvent.setEventKey(key);
+    failedEvent.setEventPayload(objectMapper.writeValueAsString(libraryEvent));
+    failedEvent.setErrorMessage(cause.getMessage());
+    failedEvent.setErrorType(errorType);
+    failedEvent.setFailedAt(LocalDateTime.now());
+    failedEvent.setStatus("PENDING_REPLAY");
+    failedEventRepository.save(failedEvent);
+
+    logger.error("Failed event saved to DB for replay. key={} errorType={}", key, errorType, ex);
+}
+```
+
+4. **Replay later** by querying for `status = 'PENDING_REPLAY'` records (for example, via a scheduled job or an admin endpoint) and re-calling `sendLibraryEvent()`.
+
+---
+
+#### Option 2 — Send an Alert to a Notification Channel (Slack / Grafana)
+
+Push an alert to your team's monitoring system so on-call engineers are notified immediately.
+
+**Option 2a — Slack (via Incoming Webhook)**
+
+1. Create an Incoming Webhook URL in your Slack workspace (Slack App → Incoming Webhooks).
+2. Add the webhook URL to `application.yml`:
+
+```yaml
+alerts:
+  slack:
+    webhook-url: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+```
+
+3. Send an HTTP POST from the error handler:
+
+```java
+// In the error handler block
+String slackMessage = String.format(
+    ":red_circle: *Kafka producer failure*%n"
+    + "Topic: `%s`  Key: `%s`%n"
+    + "Error: `%s`%n"
+    + "Event: `%s`",
+    topicName, key, cause.getMessage(),
+    objectMapper.writeValueAsString(libraryEvent));
+
+String payload = objectMapper.writeValueAsString(Map.of("text", slackMessage));
+
+HttpClient.newHttpClient().sendAsync(
+    HttpRequest.newBuilder()
+        .uri(URI.create(slackWebhookUrl))
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(payload))
+        .build(),
+    HttpResponse.BodyHandlers.discarding());
+```
+
+**Option 2b — Grafana (via Alertmanager / annotation API)**
+
+1. Record a Grafana annotation on the dashboard for every producer failure:
+
+```java
+// POST to Grafana annotations API
+String annotationBody = objectMapper.writeValueAsString(Map.of(
+    "dashboardId", 42,                       // your dashboard ID
+    "panelId",     7,                        // your panel ID
+    "time",        Instant.now().toEpochMilli(),
+    "tags",        List.of("kafka", "producer-failure"),
+    "text",        "Producer failed: key=" + key + " error=" + cause.getMessage()
+));
+
+HttpClient.newHttpClient().sendAsync(
+    HttpRequest.newBuilder()
+        .uri(URI.create("http://grafana:3000/api/annotations"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", "Bearer " + grafanaApiToken)
+        .POST(HttpRequest.BodyPublishers.ofString(annotationBody))
+        .build(),
+    HttpResponse.BodyHandlers.discarding());
+```
+
+2. Alternatively, expose a Micrometer counter (`producer.failures`) and configure a Grafana alert rule on that metric — no code change needed in the error handler beyond incrementing the counter.
+
+---
+
+> **In this course** we will only log the failed record. Persisting to a database and sending Slack/Grafana alerts are production concerns that are out of scope for this course. The patterns above are provided so you know exactly what to plug in when you need them.
+
+```java
+// What we do in this course — log the failed record
+if (ex != null) {
+    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+    if (cause instanceof RetriableException) {
+        logger.error("Retriable error exhausted all retries. key={} event={}", key, libraryEvent, ex);
+    } else {
+        logger.error("Non-retriable error. key={} event={}", key, libraryEvent, ex);
+    }
+}
+```
+
+---
+
+### 11) Error Handling in Callbacks / CompletableFuture
+
 **Async approach — `whenComplete`**
 
 Used when calling `sendLibraryEvent()`. The callback fires after Kafka's internal retries are finished, whether the send succeeded or failed.
@@ -628,8 +777,8 @@ public SendResult<Integer, LibraryEvent> sendLibraryEventSynchronous(LibraryEven
                 result.getRecordMetadata().partition(),
                 result.getRecordMetadata().offset(),
                 key);
-        return result;
 
+        return result;
     } catch (ExecutionException ex) {
         Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
         if (cause instanceof RetriableException) {
@@ -640,13 +789,15 @@ public SendResult<Integer, LibraryEvent> sendLibraryEventSynchronous(LibraryEven
             logger.error("Non-retriable error. key={} event={}", key, libraryEvent, ex);
         }
         throw ex;
-
     } catch (InterruptedException ex) {
         Thread.currentThread().interrupt();
         throw ex;
     }
 }
 ```
+
+**Why it matters**
+- Unhandled exceptions in callbacks silently drop errors. Every producer must have explicit error handling.
 
 ---
 
@@ -687,55 +838,6 @@ public CompletableFuture<SendResult<Integer, LibraryEvent>> recoverSend(
 ```
 
 > `@Recover` is called automatically when all `@Retryable` attempts are exhausted. The method signature must match the return type and include the exception as the first parameter.
-
----
-
-### 11) Error Handling in Callbacks / CompletableFuture
-
-**Async approach** (`whenComplete`) — matches current `LibraryEventProducer`
-```java
-// In LibraryEventProducer.sendLibraryEvent()
-future.whenComplete((result, ex) -> {
-    if (ex != null) {
-        logger.error("Failed to publish library event. key={} event={}", key, libraryEvent, ex);
-        return;
-    }
-    logger.info(
-            "Published library event. topic={} partition={} offset={} key={} event={}",
-            result.getRecordMetadata().topic(),
-            result.getRecordMetadata().partition(),
-            result.getRecordMetadata().offset(),
-            key,
-            libraryEvent);
-});
-```
-
-**Sync approach** (`.get()`) — matches current `LibraryEventProducer.sendLibraryEventSynchronous()`
-```java
-try {
-    SendResult<Integer, LibraryEvent> result =
-            key == null
-                    ? kafkaTemplate.send(topicName, libraryEvent).get()
-                    : kafkaTemplate.send(topicName, key, libraryEvent).get();
-
-    logger.info("Published library event synchronously. topic={} partition={} offset={} key={}",
-            result.getRecordMetadata().topic(),
-            result.getRecordMetadata().partition(),
-            result.getRecordMetadata().offset(),
-            key);
-
-    return result;
-} catch (ExecutionException ex) {
-    logger.error("Failed to publish library event synchronously. key={} event={}", key, libraryEvent, ex);
-    throw ex;
-} catch (InterruptedException ex) {
-    Thread.currentThread().interrupt();
-    throw ex;
-}
-```
-
-**Why it matters**
-- Unhandled exceptions in callbacks silently drop errors. Every producer must have explicit error handling.
 
 ---
 
