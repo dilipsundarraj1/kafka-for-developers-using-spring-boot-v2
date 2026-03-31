@@ -1,14 +1,17 @@
 package com.learnkafka.consumer;
 
 import com.learnkafka.domain.Book;
+import com.learnkafka.domain.FailureRecord;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.domain.LibraryEventType;
 import com.learnkafka.dto.BookDto;
 import com.learnkafka.dto.LibraryEventDto;
 import com.learnkafka.repository.BookRepository;
+import com.learnkafka.repository.FailureRecordRepository;
 import com.learnkafka.repository.LibraryEventRepository;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.IntegerSerializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,10 +54,15 @@ class LibraryEventsConsumerIntegrationTest {
     @Autowired
     private BookRepository bookRepository;
 
+    @Autowired
+    private FailureRecordRepository failureRecordRepository;
+
     private KafkaTemplate<Integer, LibraryEventDto> kafkaTemplate;
+    private KafkaTemplate<Integer, String> malformedPayloadTemplate;
 
     @BeforeEach
     void setUp() {
+        failureRecordRepository.deleteAll();
         bookRepository.deleteAll();
         libraryEventRepository.deleteAll();
 
@@ -65,6 +73,13 @@ class LibraryEventsConsumerIntegrationTest {
 
         var producerFactory = new DefaultKafkaProducerFactory<Integer, LibraryEventDto>(producerProps);
         kafkaTemplate = new KafkaTemplate<>(producerFactory);
+
+        Map<String, Object> malformedProducerProps = new HashMap<>();
+        malformedProducerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, embeddedKafkaBroker.getBrokersAsString());
+        malformedProducerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
+        malformedProducerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        var malformedProducerFactory = new DefaultKafkaProducerFactory<Integer, String>(malformedProducerProps);
+        malformedPayloadTemplate = new KafkaTemplate<>(malformedProducerFactory);
     }
 
     @Test
@@ -178,6 +193,24 @@ class LibraryEventsConsumerIntegrationTest {
         assertEquals(savedEvent.getLibraryEventId(), savedBook.getLibraryEvent().getLibraryEventId());
     }
 
+    @Test
+    void consumeLibraryEvent_invalidJson_shouldPersistFailureRecordAndContinue() throws Exception {
+        malformedPayloadTemplate.send("library-events", 123, "Hello").get(10, TimeUnit.SECONDS);
+
+        waitForFailureRecordCount(1, 10);
+
+        assertEquals(0, libraryEventRepository.count());
+        assertEquals(0, bookRepository.count());
+
+        List<FailureRecord> failureRecords = failureRecordRepository.findAll();
+        assertEquals(1, failureRecords.size());
+        FailureRecord failureRecord = failureRecords.getFirst();
+        assertEquals("library-events", failureRecord.getTopic());
+        assertEquals(0, failureRecord.getPartition());
+        assertEquals(0L, failureRecord.getOffsetValue());
+        assertEquals("OPEN", failureRecord.getStatus());
+    }
+
     /**
      * Polls the database until the expected number of LibraryEvent records appear,
      * or fails after the given timeout.
@@ -193,5 +226,15 @@ class LibraryEventsConsumerIntegrationTest {
         }
         fail("Timed out waiting for " + expectedCount + " library event(s), found " + libraryEventRepository.count());
     }
-}
 
+    private void waitForFailureRecordCount(long expectedCount, int timeoutSeconds) throws InterruptedException {
+        for (int i = 0; i < timeoutSeconds * 10; i++) {
+            if (failureRecordRepository.count() >= expectedCount) {
+                Thread.sleep(200);
+                return;
+            }
+            Thread.sleep(100);
+        }
+        fail("Timed out waiting for " + expectedCount + " failure record(s), found " + failureRecordRepository.count());
+    }
+}

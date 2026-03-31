@@ -18,7 +18,7 @@ public class LibraryEventsScheduler {
     }
 
     // Runs every 10 seconds — retries all OPEN failure records
-    @Scheduled(fixedRateString = "${retry.scheduler.fixed-rate:10000}")
+    //@Scheduled(fixedRateString = "${retry.scheduler.fixed-rate:10000}")
     public void retryFailedRecords() {
         log.info("Scheduler: starting retry of OPEN failure records");
         failureRecordService.retryFailedRecords();

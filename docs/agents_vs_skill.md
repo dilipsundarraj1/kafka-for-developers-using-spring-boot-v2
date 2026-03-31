@@ -5,6 +5,7 @@
 ## Table of Contents
 
 - [Introduction](#introduction)
+- [Open Format](#open-format)
 - [What is AGENTS.md?](#what-is-agentsmd)
   - [What goes inside AGENTS.md?](#what-goes-inside-agentsmd)
   - [How does AGENTS.md work?](#how-does-agentsmd-work)
@@ -47,6 +48,20 @@ AI coding agents are only as good as the context you give them. Without proper c
 Think of it this way:
 - **AGENTS.md** is the onboarding document you'd give a new developer on their first day
 - **SKILL.md** is the runbook you'd hand them when they need to do a specific task for the first time
+
+### Open Format
+
+Both `AGENTS.md` and `SKILL.md` are **plain Markdown files** — there is nothing proprietary about them. This is intentional and important.
+
+| Property | What it means |
+|----------|--------------|
+| **Plain Markdown** | No special syntax, no tooling required — any text editor can read, write, and review them |
+| **Vendor-neutral** | Not owned by any single AI vendor — GitHub Copilot, Claude Code, Cursor, and others all recognize the same conventions |
+| **Version-controllable** | Checked into Git alongside your code — they evolve with the project and are visible in PRs, diffs, and history |
+| **Human-readable** | A developer can read `AGENTS.md` and immediately understand how the project works — it is documentation for humans too, not just AI |
+| **Portable** | Copy them to a new project as a starting point, share them across teams, or publish them as templates |
+
+> Because the format is open, you are never locked in. The same files that guide GitHub Copilot today will guide any AI coding agent you adopt tomorrow.
 
 ---
 
@@ -700,3 +715,9 @@ Every row in this table is a real category of mistake that AI agents make withou
 Neither file replaces the other. `AGENTS.md` without `SKILL.md` means the AI knows your project but still guesses on specific tasks. `SKILL.md` without `AGENTS.md` means the AI has a task playbook but no project context to anchor it.
 
 Together → **Reliable, consistent, pattern-matched AI-assisted development — every time.**
+
+---
+
+## References
+
+- [AgentSkills.io](https://agentskills.io/home) — Official resource for AGENTS.md and SKILL.md patterns

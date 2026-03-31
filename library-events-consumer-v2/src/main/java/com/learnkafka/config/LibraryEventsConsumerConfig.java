@@ -14,6 +14,7 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.support.serializer.DeserializationException;
 import org.springframework.util.backoff.FixedBackOff;
 
 @Configuration
@@ -57,6 +58,7 @@ public class LibraryEventsConsumerConfig {
 
         // These exceptions skip retries and go straight to the recoverer
         errorHandler.addNotRetryableExceptions(
+                DeserializationException.class,         // malformed JSON / type mismatch
                 IllegalArgumentException.class,          // bad payload — will never succeed
                 DataIntegrityViolationException.class    // duplicate key — always fails
         );
@@ -88,7 +90,7 @@ public class LibraryEventsConsumerConfig {
         // Manual: offsets committed only when Acknowledgment.acknowledge() is called
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
 
-        factory.setCommonErrorHandler(errorHandler);
+       // factory.setCommonErrorHandler(errorHandler);
 
         return factory;
     }

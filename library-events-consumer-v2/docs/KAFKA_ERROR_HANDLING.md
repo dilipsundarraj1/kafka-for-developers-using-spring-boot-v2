@@ -1,118 +1,188 @@
 # Kafka Consumer Error Handling, Retry & Recovery
 
+This reference doc is for students implementing consumer error handling strategies in the Library Events Consumer project.
+
+It keeps the same technical content, but organizes it in an implementation-first format.
+
 ## Table of Contents
 
-- [Introduction](#introduction)
-- [Current State of the Consumer](#current-state-of-the-consumer)
-- [Types of Errors in a Kafka Consumer](#types-of-errors-in-a-kafka-consumer)
-  - [Retryable Errors](#retryable-errors)
-  - [Non-Retryable Errors](#non-retryable-errors)
-- [Spring Kafka Error Handling Architecture](#spring-kafka-error-handling-architecture)
-- [DefaultErrorHandler](#defaulterrorhandler)
-  - [What it Does](#what-it-does)
-  - [How to Configure It](#how-to-configure-it)
-- [Retry with BackOff Strategies](#retry-with-backoff-strategies)
-  - [FixedBackOff](#fixedbackoff)
-  - [ExponentialBackOff](#exponentialbackoff)
-  - [Which One to Use?](#which-one-to-use)
-- [Classifying Retryable vs Non-Retryable Exceptions](#classifying-retryable-vs-non-retryable-exceptions)
-- [Dead Letter Topic (DLT)](#dead-letter-topic-dlt)
-  - [What is a DLT?](#what-is-a-dlt)
-  - [How Spring Kafka Implements DLT](#how-spring-kafka-implements-dlt)
-  - [DeadLetterPublishingRecoverer](#deadletterpublishingrecoverer)
-  - [DLT Topic Naming Convention](#dlt-topic-naming-convention)
-- [Custom Recovery Strategies](#custom-recovery-strategies)
-  - [Log and Skip](#log-and-skip)
-  - [Persist to a Failure Table](#persist-to-a-failure-table)
-  - [Publish to DLT + Persist](#publish-to-dlt--persist)
-- [Full Configuration: LibraryEventsConsumerConfig.java](#full-configuration-libraryeventsconsumerconfigjava)
-- [How Manual Acknowledgment Interacts with Error Handling](#how-manual-acknowledgment-interacts-with-error-handling)
-- [End-to-End Flow with Error Handling](#end-to-end-flow-with-error-handling)
-- [Retry and Recovery in Tests](#retry-and-recovery-in-tests)
-- [Summary of Strategies](#summary-of-strategies)
+- [How to Use This Reference](#how-to-use-this-reference)
+- [Error Handling Dependency Flow](#error-handling-dependency-flow)
+- [Mapping to Current Project](#mapping-to-current-project)
+- [Exploring Current Consumer Behavior](#exploring-current-consumer-behavior)
+  - [Step 1 — Start the Console Producer](#step-1--start-the-console-producer)
+  - [Step 2 — Publish an Invalid Message](#step-2--publish-an-invalid-message)
+  - [Step 3 — Observed Consumer Behavior](#step-3--observed-consumer-behavior)
+- [Part 1: Spring Kafka Error Handling Infrastructure](#part-1-spring-kafka-error-handling-infrastructure)
+  - [1) Spring Kafka Error Handling Architecture](#1-spring-kafka-error-handling-architecture)
+  - [2) DefaultErrorHandler](#2-defaulterrorhandler)
+  - [3) Retry with BackOff Strategies](#3-retry-with-backoff-strategies)
+- [Part 2: Error Classification](#part-2-error-classification)
+  - [4) Types of Errors in a Kafka Consumer](#4-types-of-errors-in-a-kafka-consumer)
+  - [5) Classifying Retryable vs Non-Retryable Exceptions](#5-classifying-retryable-vs-non-retryable-exceptions)
+    - [FixedBackOff](#fixedbackoff)
+    - [ExponentialBackOff](#exponentialbackoff)
+    - [Which One to Use?](#which-one-to-use)
+- [Part 3: Recovery Strategies](#part-3-recovery-strategies)
+  - [6) Dead Letter Topic (DLT)](#6-dead-letter-topic-dlt)
+  - [7) Custom Recovery Strategies](#7-custom-recovery-strategies)
+    - [Log and Skip](#log-and-skip)
+    - [Persist to a Failure Table](#persist-to-a-failure-table)
+    - [Publish to DLT + Persist](#publish-to-dlt--persist)
+- [Part 4: Wiring It Together](#part-4-wiring-it-together)
+  - [8) Manual Acknowledgment and Error Handling](#8-manual-acknowledgment-and-error-handling)
+  - [9) Full Configuration: LibraryEventsConsumerConfig.java](#9-full-configuration-libraryeventsconsumerconfigjava)
+  - [10) End-to-End Flow with Error Handling](#10-end-to-end-flow-with-error-handling)
+- [Part 5: Testing Error Handling](#part-5-testing-error-handling)
+  - [11) Retry and Recovery in Tests](#11-retry-and-recovery-in-tests)
+- [Suggested Implementation Order](#suggested-implementation-order)
+- [Implementation Checklist](#implementation-checklist)
 
 ---
 
-## Introduction
+## How to Use This Reference
 
-A Kafka consumer that processes messages and persists them to a database will inevitably encounter failures — transient database timeouts, malformed payloads, constraint violations, and downstream service unavailability. Without a deliberate error handling strategy, one bad message can halt the entire consumer, block the partition, and cause lag to accumulate indefinitely.
+Use this in sequence while implementing:
 
-Spring Kafka provides a layered error handling system that enables:
-
-1. **Retrying** transient failures automatically with configurable backoff
-2. **Classifying** exceptions — some should be retried, some should not
-3. **Recovering** messages that cannot be processed after all retries are exhausted — typically by sending them to a Dead Letter Topic (DLT)
-4. **Continuing** processing of subsequent messages so a single bad record does not block the partition
-
-This document covers how to implement all of these for the `library-events-consumer-v2` project.
+1. Understand the Spring Kafka error handling architecture — how `DefaultErrorHandler`, `BackOff`, and `RecoveryCallback` fit together (Part 1, Section 1).
+2. Configure `DefaultErrorHandler` with the right `BackOff` strategy and wire it into `ConcurrentKafkaListenerContainerFactory` (Part 1, Sections 2–3).
+3. Classify your exceptions — decide which errors are retryable and which go straight to recovery (Part 2, Sections 4–5).
+4. Wire in a `DeadLetterPublishingRecoverer` and choose a recovery strategy (Part 3, Sections 6–7).
+5. Understand how manual acknowledgment interacts with the error handler, then wire everything together (Part 4, Sections 8–10).
+6. Validate behavior with retry- and DLT-focused integration tests (Part 5, Section 11).
 
 ---
 
-## Current State of the Consumer
+## Error Handling Dependency Flow
 
-The consumer currently uses **MANUAL acknowledgment mode**, which gives explicit control over when offsets are committed.
-
-**`LibraryEventsConsumer.java`** — current state:
-```java
-@KafkaListener(topics = "library-events")
-public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord,
-                      Acknowledgment acknowledgment) {
-    try {
-        libraryEventService.processEvent(consumerRecord);
-    } finally {
-        acknowledgment.acknowledge();
-    }
-}
+```text
+Exception thrown in @KafkaListener
+          |
+          v
+DefaultErrorHandler  ──────────────────────────────────────────────
+          |                                                         |
+          | Is it non-retryable?                                   |
+          | (IllegalArgumentException, DataIntegrityViolation...)  |
+          |                                                         |
+         YES                                                        NO
+          |                                                         |
+          v                                                         v
+Skip retries immediately                          BackOff (FixedBackOff / ExponentialBackOff)
+          |                                                         |
+          |                                              Retry 1 → Retry 2 → Retry 3
+          |                                                         |
+          |                                              All retries exhausted?
+          |                                                         |
+          └──────────────────────┬──────────────────────────────────┘
+                                 v
+                     RecoveryCallback (ConsumerRecordRecoverer)
+                                 |
+              ┌──────────────────┼──────────────────┐
+              v                  v                   v
+       Log and Skip     DeadLetterPublishing    Persist to DB
+                           Recoverer                  +
+                                |               Publish to DLT
+                                v
+                    library-events.DLT
+                                |
+                                v
+                    Offset committed by ErrorHandler
+                    Next message consumed — no partition block
 ```
 
-**Problems with this approach:**
+---
 
-| Problem | Consequence |
-|---------|------------|
-| `acknowledgment.acknowledge()` is called in `finally` — even on exception | The offset is committed even when processing fails. The message is lost silently. |
-| No retry logic | A transient DB timeout fails the message permanently on first attempt |
-| No exception classification | A malformed payload (never recoverable) is treated the same as a timeout (retryable) |
-| No dead letter handling | Failed messages disappear with no audit trail |
+## Mapping to Current Project
 
-The goal is to move from this to a proper error handling strategy while preserving manual acknowledgment control.
+| Concern | Current State | Action Needed |
+|---|---|---|
+| Exception classification | No classification — all exceptions treated the same | Add `addNotRetryableExceptions(...)` for permanent failures |
+| Retry on failure | None — first failure is final | Configure `DefaultErrorHandler` with `FixedBackOff` |
+| Dead letter handling | None — failed messages are lost silently | Wire `DeadLetterPublishingRecoverer` |
+| Acknowledgment | Success path only — `acknowledge()` called after `processEvent()` succeeds | Already correct; ensure `DefaultErrorHandler` is wired so exceptions propagate to it |
+| Retry observability | None | Add `RetryListener` to log each retry attempt |
+| Testing retries | Not tested | Add `@SpyBean` tests with simulated failures |
 
 ---
 
-## Types of Errors in a Kafka Consumer
+## Exploring Current Consumer Behavior
 
-Before configuring retry, classify which errors should be retried and which should not.
+This section demonstrates what happens when an incompatible message is published to `library-events` — one that cannot be deserialized into `LibraryEventDto`.
 
-### Retryable Errors
+### Step 1 — Start the Console Producer
 
-These are **transient failures** — the same message may succeed if tried again after a short delay:
+```bash
+docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 \
+  --topic library-events
+```
 
-| Error | Reason |
-|-------|--------|
-| `TransientDataAccessException` | Temporary DB lock or timeout |
-| `RecoverableDataAccessException` | Transient DB connectivity issue |
-| `SocketTimeoutException` | Network hiccup to the database |
-| `JpaSystemException` (wrapping transient causes) | JPA-level transient failures |
-| Custom application exceptions marked as retryable | Business logic that may succeed on retry |
+### Step 2 — Publish an Invalid Message
 
-### Non-Retryable Errors
+At the `>` prompt, type a plain string that is not valid JSON:
 
-These are **permanent failures** — retrying will never succeed. Routing these to a DLT immediately (without wasting retry attempts) is the right strategy:
+```
+> hello world
+```
 
-| Error | Reason |
-|-------|--------|
-| `IllegalArgumentException` | Invalid message content — will always fail |
-| `NullPointerException` | Programming error or malformed payload |
-| `DataIntegrityViolationException` | Duplicate key — retrying will always fail |
-| `JsonProcessingException` | Malformed JSON in the message value |
-| `InvalidFormatException` | Invalid enum value or type mismatch in payload |
-| Custom domain exceptions marked as non-retryable | Business rule violations |
+Press `Ctrl+C` to exit the producer.
+
+### Step 3 — Observed Consumer Behavior
+
+The consumer is configured with `JsonDeserializer` and `spring.json.value.default.type: com.learnkafka.dto.LibraryEventDto`. When it polls `hello world`, the deserializer attempts to parse it as `LibraryEventDto` and fails immediately.
+
+**What happens internally:**
+
+```text
+Consumer polls "hello world" from library-events partition 0
+    ↓
+JsonDeserializer.deserialize() throws SerializationException
+  └─ caused by: JsonParseException: Unrecognized token 'hello'
+    ↓
+DefaultErrorHandler intercepts the SerializationException
+    ↓
+SerializationException is non-retryable by default — retries are SKIPPED
+    ↓
+Recovery callback fires immediately
+    ↓
+failureRecordService.saveFailureRecord() persists record to failure_record table (status=OPEN)
+    ↓
+Offset committed — consumer moves to next record, partition NOT blocked
+```
+
+**Consumer log output:**
+
+```
+ERROR o.s.k.s.s.JsonDeserializer - Failed to deserialize payload for topic [library-events]
+      com.fasterxml.jackson.core.JsonParseException: Unrecognized token 'hello': was expecting
+      (JSON String, Number, Array, Object or token 'null', 'true' or 'false')
+       at [Source: (byte[])"hello world"; line: 1, column: 6]
+
+ERROR c.l.config.LibraryEventsConsumerConfig - All retries exhausted. Persisting failed record
+      to failure_record table. Topic=library-events, Partition=0, Offset=5,
+      Exception=Failed to deserialize payload for topic [library-events]
+```
+
+> No `WARN Retry attempt` lines appear — deserialization errors are non-retryable by default so `DefaultErrorHandler` skips the backoff loop entirely and goes straight to the recoverer.
+
+### Why This Matters
+
+| Without error handling | With current `DefaultErrorHandler` |
+|---|---|
+| Consumer throws, partition blocks indefinitely | Partition never blocks — offset advances after recovery |
+| Bad message retried forever | Non-retryable — goes straight to `failure_record` table |
+| No audit trail | Record persisted with `status=OPEN` for later inspection |
+| Consumer may crash | Consumer continues processing subsequent messages |
 
 ---
 
-## Spring Kafka Error Handling Architecture
+## Part 1: Spring Kafka Error Handling Infrastructure
 
-Spring Kafka's error handling stack (as of Spring Kafka 3.x / Spring Boot 4.x):
+### 1) Spring Kafka Error Handling Architecture
 
+**What**
+- Spring Kafka's error handling stack sits between the Kafka container and the listener method. Exceptions thrown by the listener are caught by `DefaultErrorHandler`, which orchestrates retries and recovery without blocking the partition.
+
+**How it works internally**
 ```
 Kafka Broker
      |
@@ -142,21 +212,24 @@ RecoveryCallback
 
 The key component is `DefaultErrorHandler`, which replaced the older `SeekToCurrentErrorHandler` in Spring Kafka 2.8+.
 
+**Why it matters**
+- Without `DefaultErrorHandler`, an unhandled exception from the listener propagates up to the container, which logs it and moves on — the message is silently dropped. `DefaultErrorHandler` ensures no message is lost without a deliberate recovery decision.
+
 ---
 
-## DefaultErrorHandler
+### 2) DefaultErrorHandler
 
-### What it Does
+**What**
+- `DefaultErrorHandler` is a `CommonErrorHandler` implementation that catches exceptions thrown by the listener method, applies the configured backoff and retry logic, and delegates to a `RecoveryCallback` when retries are exhausted.
 
-`DefaultErrorHandler` is a `CommonErrorHandler` implementation that:
+**How it works internally**
+1. Catches exceptions thrown by the listener method.
+2. Checks if the exception is classified as non-retryable — if so, immediately invokes the recovery callback.
+3. If retryable, waits for the configured `BackOff` interval and retries the same record.
+4. After all retry attempts are exhausted, invokes the recovery callback.
+5. After recovery, acknowledges the offset and moves to the next record — **the partition is not blocked**.
 
-1. Catches exceptions thrown by the listener method
-2. Checks if the exception is classified as non-retryable — if so, immediately invokes the recovery callback
-3. If retryable, waits for the configured `BackOff` interval and retries the same record
-4. After all retry attempts are exhausted, invokes the recovery callback
-5. After recovery, acknowledges the offset and moves to the next record — **the partition is not blocked**
-
-### How to Configure It
+**How to configure it**
 
 `DefaultErrorHandler` is registered on the `ConcurrentKafkaListenerContainerFactory` bean in `LibraryEventsConsumerConfig`:
 
@@ -178,13 +251,20 @@ public ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto>
 }
 ```
 
+**Common pitfall**
+- If you forget to register `DefaultErrorHandler` on the container factory, Spring Boot's default error handling applies — which is no retry and silent message discard. Always verify the error handler is wired up.
+
+**Why it matters**
+- This is the central orchestrator of the consumer error handling strategy. All retry and recovery flows pass through it.
+
 ---
 
-## Retry with BackOff Strategies
+### 3) Retry with BackOff Strategies
 
-BackOff determines how long to wait between retry attempts.
+**What**
+- `BackOff` determines how long `DefaultErrorHandler` waits between retry attempts. The right choice depends on the nature of the transient failure — short DB blip vs. prolonged downstream outage.
 
-### FixedBackOff
+#### FixedBackOff
 
 Retries at a fixed interval — same wait time between every attempt.
 
@@ -197,7 +277,6 @@ DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, fixedBackO
 ```
 
 **Retry timeline:**
-
 ```
 Message fails at T=0
   ↓ wait 1s
@@ -212,7 +291,7 @@ Recovery invoked  → publish to DLT
 
 **When to use:** Simple scenarios where the issue is expected to resolve quickly (e.g., short DB connection blip).
 
-### ExponentialBackOff
+#### ExponentialBackOff
 
 Retries with exponentially increasing wait times — avoids hammering a struggling downstream system.
 
@@ -227,7 +306,6 @@ DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, exponentia
 ```
 
 **Retry timeline:**
-
 ```
 Message fails at T=0
   ↓ wait 1s
@@ -246,7 +324,7 @@ Recovery invoked  → publish to DLT
 
 **When to use:** Database or downstream service is under load — exponential backoff gives it progressively more time to recover without flooding it.
 
-### Which One to Use?
+#### Which One to Use?
 
 | Scenario | Recommended BackOff |
 |----------|-------------------|
@@ -255,36 +333,123 @@ Recovery invoked  → publish to DLT
 | External service call (circuit breaker candidate) | `ExponentialBackOff` with max interval cap |
 | Unit testing retry behavior | `FixedBackOff(0, 2)` — no wait, 2 retries |
 
+**Common pitfall**
+- Using `FixedBackOff(0, 3)` in production means three retries with zero delay — the recovering database is immediately flooded before it has a chance to stabilize. Always use at least `1000ms` in non-test environments.
+
+**Why it matters**
+- The BackOff strategy determines whether the consumer acts as a good citizen toward downstream systems or hammers them under failure conditions.
+
 For this project, `FixedBackOff` with 3 retries at 1 second is a reasonable starting point.
+
+#### Wiring BackOff → DefaultErrorHandler → ConcurrentKafkaListenerContainerFactory
+
+Once the `BackOff` is chosen, it flows through `DefaultErrorHandler` and is registered on the container factory:
+
+```java
+@Bean
+public DefaultErrorHandler errorHandler(DeadLetterPublishingRecoverer recoverer) {
+
+    // Step 1 — choose a BackOff strategy
+    FixedBackOff fixedBackOff = new FixedBackOff(1_000L, 3L);
+    //                                             ↑        ↑
+    //                                          interval  maxAttempts
+
+    // Step 2 — build DefaultErrorHandler with the backoff and recoverer
+    DefaultErrorHandler errorHandler =
+            new DefaultErrorHandler(recoverer, fixedBackOff);
+
+    return errorHandler;
+}
+
+@Bean
+public ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto>
+        kafkaListenerContainerFactory(
+            ConsumerFactory<Integer, LibraryEventDto> consumerFactory,
+            DefaultErrorHandler errorHandler) {           // ← injected from above
+
+    ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto> factory =
+            new ConcurrentKafkaListenerContainerFactory<>();
+
+    factory.setConsumerFactory(consumerFactory);
+    factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
+    factory.setCommonErrorHandler(errorHandler);          // ← Step 3: registered here
+
+    return factory;
+}
+```
+
+The same pattern applies when switching to `ExponentialBackOff` — only Step 1 changes:
+
+```java
+// Step 1 (ExponentialBackOff variant) — swap in here; Steps 2 and 3 are unchanged
+ExponentialBackOff exponentialBackOff = new ExponentialBackOff();
+exponentialBackOff.setInitialInterval(1_000L);
+exponentialBackOff.setMultiplier(2.0);
+exponentialBackOff.setMaxInterval(10_000L);
+exponentialBackOff.setMaxElapsedTime(30_000L);
+
+DefaultErrorHandler errorHandler =
+        new DefaultErrorHandler(recoverer, exponentialBackOff);
+```
 
 ---
 
-## Classifying Retryable vs Non-Retryable Exceptions
+## Part 2: Error Classification
 
-`DefaultErrorHandler` has two methods for exception classification:
+### 4) Types of Errors in a Kafka Consumer
 
-**`addNotRetryableExceptions(Class<?>...)`** — these exceptions skip retries entirely and go straight to recovery:
+**What**
+- Consumer failures fall into two categories: transient (retryable) and permanent (non-retryable). Getting this classification right determines whether a retry wastes time or recovers successfully.
 
-```java
-errorHandler.addNotRetryableExceptions(
-    IllegalArgumentException.class,
-    NullPointerException.class
-);
-```
+**Retryable Errors**
 
-**`addRetryableExceptions(Class<?>...)`** — only these exceptions trigger retry (all others go straight to recovery):
+These are **transient failures** — the same message may succeed if tried again after a short delay:
 
-```java
-errorHandler.addRetryableExceptions(
-    RecoverableDataAccessException.class
-);
-```
+| Error | Reason |
+|-------|--------|
+| `TransientDataAccessException` | Temporary DB lock or timeout |
+| `RecoverableDataAccessException` | Transient DB connectivity issue |
+| `SocketTimeoutException` | Network hiccup to the database |
+| `JpaSystemException` (wrapping transient causes) | JPA-level transient failures |
+| Custom application exceptions marked as retryable | Business logic that may succeed on retry |
 
-> Use `addNotRetryableExceptions` when you want most exceptions to retry by default, but exclude specific ones.
-> Use `addRetryableExceptions` when you want a strict allowlist — only named exceptions retry; everything else goes straight to DLT.
+**Non-Retryable Errors**
 
-For this project, the recommended approach is to use `addNotRetryableExceptions` — opt specific exceptions out of retry:
+These are **permanent failures** — retrying will never succeed. Routing these to a DLT immediately (without wasting retry attempts) is the right strategy:
 
+| Error | Reason |
+|-------|--------|
+| `IllegalArgumentException` | Invalid message content — will always fail |
+| `NullPointerException` | Programming error or malformed payload |
+| `DataIntegrityViolationException` | Duplicate key — retrying will always fail |
+| `JsonProcessingException` | Malformed JSON in the message value |
+| `InvalidFormatException` | Invalid enum value or type mismatch in payload |
+| Custom domain exceptions marked as non-retryable | Business rule violations |
+
+**Common pitfall**
+- Treating all exceptions as retryable causes the consumer to retry a duplicate-key insert 3 times before sending it to the DLT — wasting 3 seconds of backoff time and retrying something that can never succeed. Classify `DataIntegrityViolationException` as non-retryable from the start.
+
+**Why it matters**
+- Correct classification prevents both silent message loss (no retry on transient failures) and wasted retry attempts (retrying permanent failures). It is the foundation of the entire error handling strategy.
+
+---
+
+### 5) Classifying Retryable vs Non-Retryable Exceptions
+
+**What**
+- `DefaultErrorHandler` provides two methods to register exception classifications. Use these to tell the error handler which exceptions should bypass retries entirely.
+
+**Key configs**
+- `addNotRetryableExceptions(Class<?>...)` — named exceptions skip all retries and go straight to recovery.
+- `addRetryableExceptions(Class<?>...)` — only named exceptions trigger retry; everything else goes straight to recovery (strict allowlist mode).
+
+**How it works internally**
+- By default, `DefaultErrorHandler` considers all exceptions retryable unless told otherwise.
+- When an exception is thrown by the listener, `DefaultErrorHandler` checks its exception classification map before deciding whether to start the backoff loop or invoke recovery immediately.
+- `addNotRetryableExceptions` is the permissive approach: most things retry, specific exceptions do not.
+- `addRetryableExceptions` is the restrictive approach: only named exceptions retry, all others go straight to DLT. Use this when you want tight control over what is allowed to retry.
+
+**Recommended approach for this project — `addNotRetryableExceptions`:**
 ```java
 errorHandler.addNotRetryableExceptions(
     IllegalArgumentException.class,        // bad payload — will never succeed
@@ -293,41 +458,66 @@ errorHandler.addNotRetryableExceptions(
 );
 ```
 
+**Common pitfall**
+- `NullPointerException` is retryable by default in `DefaultErrorHandler`. If a malformed message causes an NPE in `processEvent()`, it will be retried 3 times before going to the DLT — always add it to the non-retryable list.
+
+**Why it matters**
+- Without explicit classification, every error — including ones that can never recover — wastes retry time and clogs the backoff queue.
+
 ---
 
-## Dead Letter Topic (DLT)
+## Part 3: Recovery Strategies
 
-### What is a DLT?
+### 6) Dead Letter Topic (DLT)
 
-A Dead Letter Topic (DLT) is a separate Kafka topic where messages that could not be processed — even after all retry attempts — are published for later inspection, reprocessing, or alerting.
+**What**
+- A Dead Letter Topic (DLT) is a separate Kafka topic where messages that could not be processed — even after all retry attempts — are published for later inspection, reprocessing, or alerting.
 
 ```
 library-events          ← original topic (messages consumed here)
 library-events.DLT      ← dead letter topic (failed messages land here)
 ```
 
-The DLT gives you:
-- An audit trail of every failed message
-- The ability to inspect and reprocess failures manually
-- Prevention of message loss — nothing is silently dropped
-- Separation of failed messages from the main processing flow
+**How it works internally**
+- Spring Kafka provides `DeadLetterPublishingRecoverer` — a `ConsumerRecordRecoverer` that:
+  1. Takes the failed `ConsumerRecord`
+  2. Publishes it to `<original-topic>.DLT` using a `KafkaTemplate`
+  3. Includes the original headers plus additional failure metadata headers:
+     - `kafka_dlt-exception-fqcn` — fully qualified exception class name
+     - `kafka_dlt-exception-message` — exception message
+     - `kafka_dlt-exception-stacktrace` — full stack trace
+     - `kafka_dlt-original-topic` — source topic
+     - `kafka_dlt-original-partition` — source partition
+     - `kafka_dlt-original-offset` — source offset
 
-### How Spring Kafka Implements DLT
+**DLT Topic Naming Convention**
 
-Spring Kafka provides `DeadLetterPublishingRecoverer` — a `ConsumerRecordRecoverer` that:
+| Original Topic | DLT Topic |
+|---------------|-----------|
+| `library-events` | `library-events.DLT` |
+| `order-events` | `order-events.DLT` |
 
-1. Takes the failed `ConsumerRecord`
-2. Publishes it to `<original-topic>.DLT` using a `KafkaTemplate`
-3. Includes the original headers plus additional failure metadata headers:
-   - `kafka_dlt-exception-fqcn` — fully qualified exception class name
-   - `kafka_dlt-exception-message` — exception message
-   - `kafka_dlt-exception-stacktrace` — full stack trace
-   - `kafka_dlt-original-topic` — source topic
-   - `kafka_dlt-original-partition` — source partition
-   - `kafka_dlt-original-offset` — source offset
+Spring Kafka follows the `<topic>.DLT` convention by default. You can override this.
 
-### DeadLetterPublishingRecoverer
+**Create the DLT topic via Docker**
 
+Run this command against the running `kafka1` container (matches the `docker-compose-multi-broker.yml` setup in this project):
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
+  --create --topic library-events.DLT --partitions 3 --replication-factor 3
+```
+
+Verify it was created:
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
+  --describe --topic library-events.DLT
+```
+
+> `kafka1:19092` is the internal listener address used inside the Docker network (see `KAFKA_ADVERTISED_LISTENERS` in `docker-compose-multi-broker.yml`). `localhost:9092` is only reachable from the host machine, not from within the container.
+
+**Basic configuration:**
 ```java
 @Bean
 public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEventDto> kafkaTemplate) {
@@ -336,8 +526,7 @@ public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEve
 }
 ```
 
-To customize the DLT topic name or partition routing:
-
+**Custom DLT topic or partition routing:**
 ```java
 @Bean
 public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEventDto> kafkaTemplate) {
@@ -350,22 +539,20 @@ public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEve
 }
 ```
 
-### DLT Topic Naming Convention
+**Common pitfall**
+- The DLT topic must exist on the broker before the consumer starts — or `auto.create.topics.enable=true` must be set. If the DLT topic doesn't exist and auto-creation is off, the `DeadLetterPublishingRecoverer` will throw a `TopicAuthorizationException` or `UnknownTopicOrPartitionException` at recovery time, and the original message will still be lost.
 
-| Original Topic | DLT Topic |
-|---------------|-----------|
-| `library-events` | `library-events.DLT` |
-| `order-events` | `order-events.DLT` |
-
-Spring Kafka follows the `<topic>.DLT` convention by default. You can override this.
+**Why it matters**
+- The DLT gives you an audit trail of every failed message, the ability to reprocess failures manually, and prevents silent message loss. Nothing is dropped without a record.
 
 ---
 
-## Custom Recovery Strategies
+### 7) Custom Recovery Strategies
 
-`DeadLetterPublishingRecoverer` is the most common recovery strategy, but you can implement any behavior using a `ConsumerRecordRecoverer` lambda or class.
+**What**
+- `DeadLetterPublishingRecoverer` is the most common recovery strategy, but any behavior can be implemented using a `ConsumerRecordRecoverer` lambda or class.
 
-### Log and Skip
+#### Log and Skip
 
 The simplest recovery — log the failure and move on. Use only for non-critical use cases where message loss is acceptable:
 
@@ -376,7 +563,9 @@ ConsumerRecordRecoverer logAndSkip = (record, exception) -> {
 };
 ```
 
-### Persist to a Failure Table
+**When to use:** Metrics events or logging records where the occasional loss under extreme failure is acceptable.
+
+#### Persist to a Failure Table
 
 Persist failed messages to a database table for inspection and manual reprocessing:
 
@@ -395,7 +584,9 @@ ConsumerRecordRecoverer persistToFailureTable = (record, exception) -> {
 };
 ```
 
-### Publish to DLT + Persist
+**When to use:** When you need operational visibility and the ability to replay specific failed records via an admin endpoint or scheduled job.
+
+#### Publish to DLT + Persist
 
 Combine both — publish to DLT for Kafka-based reprocessing and persist for visibility in your operational database:
 
@@ -413,11 +604,68 @@ ConsumerRecordRecoverer dltAndPersist = (record, exception) -> {
 };
 ```
 
+**When to use:** Production systems where you need both Kafka-based replay capability and operational dashboards showing failure counts and details.
+
+**Common pitfall**
+- If the database write in `persistToFailureTable` fails (e.g., the DB is down), the recovery itself throws an exception. Wrap the persistence call in a try/catch so that a DB failure during recovery does not prevent the offset from advancing and block the partition.
+
+**Why it matters**
+- The recovery strategy is the last line of defense. Choosing the right one determines whether failed messages disappear silently, accumulate in a DLT for replay, or are visible in your operational database.
+
 ---
 
-## Full Configuration: LibraryEventsConsumerConfig.java
+## Part 4: Wiring It Together
 
-Here is the complete updated `LibraryEventsConsumerConfig` with retry, DLT, and non-retryable exception classification:
+### 8) Manual Acknowledgment and Error Handling
+
+**What**
+- With `MANUAL` acknowledgment mode, the listener controls when offsets are committed. `acknowledge()` must only be called on the success path so that exceptions propagate to `DefaultErrorHandler` for retry and recovery.
+
+**How it works internally**
+- When `acknowledge()` is called only on the success path, an exception from `processEvent()` propagates to `DefaultErrorHandler`. The error handler redelivers the same record for retries, and commits the offset only after recovery completes.
+- If `acknowledge()` were called in a `finally` block, the offset would be committed immediately — even if `processEvent()` threw an exception. The error handler would never see it and the message would be permanently lost.
+
+**Current implementation (correct):**
+```java
+@KafkaListener(topics = "library-events")
+public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord,
+                      Acknowledgment acknowledgment) {
+    log.info("ConsumerRecord : {}", consumerRecord);
+    libraryEventService.processEvent(consumerRecord);
+    // Only acknowledge on success — on exception, DefaultErrorHandler takes over:
+    // it retries with FixedBackOff, then persists to failure_record table on exhaustion.
+    acknowledgment.acknowledge();
+}
+```
+
+**How the offset advances on failure:**
+```text
+onMessage() called
+    ↓
+processEvent() throws TransientDataAccessException
+    ↓
+Exception propagates to DefaultErrorHandler  ← no acknowledge yet
+    ↓
+Retry 1 (after 1s backoff) → succeeds
+    ↓
+onMessage() calls acknowledgment.acknowledge()  ← offset committed ✓
+```
+
+When the listener throws an exception, `DefaultErrorHandler` intercepts it. The offset is **not** committed until either:
+- The retry succeeds → `acknowledge()` is called by the listener
+- All retries are exhausted → `DefaultErrorHandler` acknowledges after recovery (DLT publish)
+
+**Common pitfall**
+- Since any exception from `processEvent()` propagates directly to `DefaultErrorHandler`, make sure the error handler is correctly wired on the container factory — otherwise exceptions will propagate to the container and be swallowed silently.
+
+**Why it matters**
+- This ensures no message is ever lost — either it succeeds and the offset moves forward, or it goes to the DLT and the offset moves forward.
+
+---
+
+### 9) Full Configuration: LibraryEventsConsumerConfig.java
+
+The complete updated `LibraryEventsConsumerConfig` with retry, DLT, and non-retryable exception classification:
 
 ```java
 @Configuration
@@ -498,47 +746,19 @@ public class LibraryEventsConsumerConfig {
 }
 ```
 
----
+**Why each component earns its place**
 
-## How Manual Acknowledgment Interacts with Error Handling
-
-The current consumer acknowledges in `finally` — which means it acknowledges even on failure. This must be changed to allow `DefaultErrorHandler` to control offset management during retries.
-
-**Current (incorrect with error handler):**
-
-```java
-@KafkaListener(topics = "library-events")
-public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord,
-                      Acknowledgment acknowledgment) {
-    try {
-        libraryEventService.processEvent(consumerRecord);
-    } finally {
-        acknowledgment.acknowledge();   // ← called even on failure — message is lost
-    }
-}
-```
-
-**Updated (correct with error handler):**
-
-```java
-@KafkaListener(topics = "library-events")
-public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord,
-                      Acknowledgment acknowledgment) {
-    libraryEventService.processEvent(consumerRecord);
-    acknowledgment.acknowledge();   // ← only called on success
-    // On exception: DefaultErrorHandler takes over — retries, then recovers
-}
-```
-
-When the listener throws an exception, `DefaultErrorHandler` intercepts it. The offset is **not** committed until either:
-- The retry succeeds → `acknowledge()` is called by the listener
-- All retries are exhausted → `DefaultErrorHandler` acknowledges after recovery (DLT publish)
-
-This ensures no message is ever lost — either it succeeds and the offset moves forward, or it goes to the DLT and the offset moves forward.
+| Component | Without it | With it |
+|---|---|---|
+| `DefaultErrorHandler` | Exceptions swallowed silently by container — message lost | Retry + recovery orchestrated automatically |
+| `FixedBackOff(1000, 3)` | No retry — first failure is final | 3 retry attempts with 1s breathing room |
+| `addNotRetryableExceptions` | Duplicate keys retried 3 times before DLT | Permanent failures go to DLT immediately |
+| `DeadLetterPublishingRecoverer` | Failed messages disappear — no audit trail | Failed records land in DLT with full exception context |
+| `RetryListener` | No visibility into retry attempts | Each retry logged — observable in production |
 
 ---
 
-## End-to-End Flow with Error Handling
+### 10) End-to-End Flow with Error Handling
 
 ```
 Kafka Broker: library-events
@@ -586,22 +806,42 @@ Next message consumed                                        v
 
 ---
 
-## Retry and Recovery in Tests
+## Part 5: Testing Error Handling
 
-Testing retry and recovery behavior requires:
-- Injecting `SpyBean` on the consumer or service to simulate failures
-- Verifying retry count with `CountDownLatch` or `verify(..., times(n))`
-- Verifying DLT message delivery via a separate `@KafkaListener` on the DLT topic
+### 11) Retry and Recovery in Tests
 
-**Example — testing that a retryable exception retries 3 times:**
+**What**
+- Testing retry and recovery behavior requires injecting `@SpyBean` on the consumer or service to simulate failures, verifying retry count, and verifying DLT message delivery.
 
+**Key setup**
 ```java
-@SpyBean
-LibraryEventsConsumer libraryEventsConsumer;
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@EmbeddedKafka(partitions = 1, topics = {"library-events", "library-events.DLT"})
+@TestPropertySource(properties = {
+        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
+        "spring.kafka.consumer.group-id=library-events-consumer-test"
+})
+class LibraryEventsConsumerIntegrationTest {
 
-@SpyBean
-LibraryEventService libraryEventService;
+    @SpyBean
+    LibraryEventsConsumer libraryEventsConsumer;
 
+    @SpyBean
+    LibraryEventService libraryEventService;
+
+    @Autowired
+    KafkaTemplate<Integer, LibraryEventDto> kafkaTemplate;
+}
+```
+
+**What to test**
+- Happy path: a valid event is consumed, persisted, and the offset advances.
+- Retryable failure: a `RecoverableDataAccessException` causes 3 retry attempts (4 total invocations: 1 original + 3 retries), then the record goes to DLT.
+- Non-retryable failure: an `IllegalArgumentException` triggers exactly 1 invocation — no retries — and the record goes to DLT immediately.
+- DLT delivery: a `@KafkaListener` on `library-events.DLT` confirms the failed record arrived with the correct headers.
+
+**Example — retryable exception retries 3 times:**
+```java
 @Test
 void onMessage_retryableException_shouldRetryThreeTimes() throws Exception {
     // given
@@ -616,13 +856,15 @@ void onMessage_retryableException_shouldRetryThreeTimes() throws Exception {
     kafkaTemplate.send("library-events", dto).get(10, TimeUnit.SECONDS);
 
     // then — 1 original + 3 retries = 4 total invocations
-    CountDownLatch latch = new CountDownLatch(4);
     await().atMost(Duration.ofSeconds(10))
            .untilAsserted(() ->
                verify(libraryEventService, times(4)).processEvent(any())
            );
 }
+```
 
+**Example — non-retryable exception goes to DLT immediately:**
+```java
 @Test
 void onMessage_nonRetryableException_shouldGoToDLTImmediately() throws Exception {
     // given
@@ -635,7 +877,7 @@ void onMessage_nonRetryableException_shouldGoToDLTImmediately() throws Exception
     // when
     kafkaTemplate.send("library-events", dto).get(10, TimeUnit.SECONDS);
 
-    // then — no retries, goes straight to DLT
+    // then — no retries, goes straight to DLT — exactly 1 invocation
     await().atMost(Duration.ofSeconds(5))
            .untilAsserted(() ->
                verify(libraryEventService, times(1)).processEvent(any())
@@ -644,23 +886,35 @@ void onMessage_nonRetryableException_shouldGoToDLTImmediately() throws Exception
 }
 ```
 
+**Common pitfall**
+- `@SpyBean` wraps the real bean with a Mockito spy — it calls the real method unless stubbed with `doThrow(...)`. Using `when(...).thenThrow(...)` syntax (vs `doThrow(...).when(...)`) can cause the real method to execute once before the stub kicks in. Always use `doThrow` with `@SpyBean`.
+
+**Why it matters**
+- Without tests that inject failures, you have no proof the retry and DLT paths actually work. Retry and recovery bugs are invisible in happy-path tests.
+
 ---
 
-## Summary of Strategies
+## Suggested Implementation Order
 
-| Strategy | When to Use | Spring Kafka Component |
-|----------|------------|----------------------|
-| **Fixed Retry** | Short transient errors (DB timeout, network blip) | `FixedBackOff` + `DefaultErrorHandler` |
-| **Exponential Retry** | Downstream under load — back off progressively | `ExponentialBackOff` + `DefaultErrorHandler` |
-| **Non-Retryable Classification** | Bad payload, constraint violations — never will succeed | `errorHandler.addNotRetryableExceptions(...)` |
-| **Dead Letter Topic** | Full audit trail, no message loss, reprocessing support | `DeadLetterPublishingRecoverer` |
-| **Log and Skip** | Non-critical events where loss is acceptable | Custom `ConsumerRecordRecoverer` lambda |
-| **Persist to Failure Table** | Operational visibility into failed messages | Custom `ConsumerRecordRecoverer` + repository |
+1. **Classify exceptions** — decide which are retryable vs non-retryable for your domain.
+3. **Configure `FixedBackOff`** — start simple with 3 retries at 1 second.
+4. **Wire `DeadLetterPublishingRecoverer`** — DLT is the safety net for all unrecoverable failures.
+5. **Register `DefaultErrorHandler`** — connect backoff and recoverer to the container factory.
+6. **Add `addNotRetryableExceptions`** — exclude permanent failures from retry.
+7. **Add `RetryListener`** — log retry attempts for observability.
+8. **Write failure-injection tests** — verify retry count and DLT delivery with `@SpyBean`.
 
-### The Rule
+---
 
-> **Retryable exceptions** → retry with backoff → DLT on exhaustion
-> **Non-retryable exceptions** → skip retries → DLT immediately
-> **DLT** → always — never silently drop a message
+## Implementation Checklist
 
-This gives you maximum resilience: transient failures recover automatically, permanent failures are captured for inspection, and the consumer never blocks a partition waiting forever on a message it can never process.
+- [ ] Confirm `acknowledgment.acknowledge()` is on the success path only in `onMessage()`.
+- [ ] Identify which exceptions in your domain are retryable vs non-retryable.
+- [ ] Configure `FixedBackOff` (or `ExponentialBackOff`) with appropriate interval and max attempts.
+- [ ] Create a `DeadLetterPublishingRecoverer` bean wired to a `KafkaTemplate`.
+- [ ] Create a `DefaultErrorHandler` bean with the backoff and recoverer.
+- [ ] Register `addNotRetryableExceptions` for permanent failure types.
+- [ ] Add a `RetryListener` to log each retry attempt.
+- [ ] Register the `DefaultErrorHandler` on the `ConcurrentKafkaListenerContainerFactory`.
+- [ ] Write integration tests that inject `RecoverableDataAccessException` and verify 4 total invocations.
+- [ ] Write integration tests that inject `IllegalArgumentException` and verify 1 total invocation + DLT delivery.
