@@ -90,7 +90,7 @@ public class LibraryEventsConsumerConfig {
         // Manual: offsets committed only when Acknowledgment.acknowledge() is called
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
 
-       // factory.setCommonErrorHandler(errorHandler);
+      factory.setCommonErrorHandler(errorHandler);
 
         return factory;
     }

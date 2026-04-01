@@ -118,6 +118,29 @@ docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 \
 
 ### Step 2 — Publish an Invalid Message
 
+At the `>` prompt, paste an UPDATE event with a null `libraryEventId` (invalid — UPDATE requires a non-null ID).
+
+> **Important:** `kafka-console-producer` sends each line as a separate message. Always paste JSON as a single line, otherwise each line becomes its own message and causes a `SerializationException`. Also note the field name must be `libraryEventType` (not `eventType`) to match the `LibraryEventDto` record.
+
+```
+{"libraryEventId":null,"libraryEventType":"UPDATE","book":{"bookId":1,"bookName":"Kafka: The Definitive Guide","bookAuthor":"Neha Narkhede"}}
+```
+
+**Observed error log (DefaultErrorHandler):**
+
+```
+INFO  c.l.consumer.LibraryEventsConsumer - ConsumerRecord : ConsumerRecord(topic = library-events, partition = 0, offset = 71, value = LibraryEventDto[libraryEventId=null, libraryEventType=UPDATE, book=BookDto[bookId=1, bookName=Kafka: The Definitive Guide, bookAuthor=Neha Narkhede]])
+INFO  c.l.service.LibraryEventService   - LibraryEventDto : LibraryEventDto[libraryEventId=null, libraryEventType=UPDATE, ...]
+ERROR o.s.kafka.listener.DefaultErrorHandler - Backoff FixedBackOffExecution[interval=0, currentAttempts=10, maxAttempts=9] exhausted for library-events-0@71
+
+org.springframework.kafka.listener.ListenerExecutionFailedException: Listener method threw exception
+```
+
+Key observations:
+- The message **deserializes successfully** — the consumer and service both log it before the error
+- `currentAttempts=10, maxAttempts=9` — the `IllegalArgumentException` thrown by the validation **is retryable**, so `DefaultErrorHandler` exhausts all 9 retries before giving up
+- Contrast with `hello world`: deserialization errors skip retries entirely (`maxAttempts=0`); application-level exceptions go through the full retry cycle
+
 At the `>` prompt, type a plain string that is not valid JSON:
 
 ```
@@ -126,52 +149,22 @@ At the `>` prompt, type a plain string that is not valid JSON:
 
 Press `Ctrl+C` to exit the producer.
 
-### Step 3 — Observed Consumer Behavior
-
-The consumer is configured with `JsonDeserializer` and `spring.json.value.default.type: com.learnkafka.dto.LibraryEventDto`. When it polls `hello world`, the deserializer attempts to parse it as `LibraryEventDto` and fails immediately.
-
-**What happens internally:**
-
-```text
-Consumer polls "hello world" from library-events partition 0
-    ↓
-JsonDeserializer.deserialize() throws SerializationException
-  └─ caused by: JsonParseException: Unrecognized token 'hello'
-    ↓
-DefaultErrorHandler intercepts the SerializationException
-    ↓
-SerializationException is non-retryable by default — retries are SKIPPED
-    ↓
-Recovery callback fires immediately
-    ↓
-failureRecordService.saveFailureRecord() persists record to failure_record table (status=OPEN)
-    ↓
-Offset committed — consumer moves to next record, partition NOT blocked
-```
-
-**Consumer log output:**
+**Observed error log (DefaultErrorHandler):**
 
 ```
-ERROR o.s.k.s.s.JsonDeserializer - Failed to deserialize payload for topic [library-events]
-      com.fasterxml.jackson.core.JsonParseException: Unrecognized token 'hello': was expecting
-      (JSON String, Number, Array, Object or token 'null', 'true' or 'false')
-       at [Source: (byte[])"hello world"; line: 1, column: 6]
+ERROR o.s.kafka.listener.DefaultErrorHandler - Backoff FixedBackOffExecution[interval=0, currentAttempts=1, maxAttempts=0] exhausted for library-events-0@18
 
-ERROR c.l.config.LibraryEventsConsumerConfig - All retries exhausted. Persisting failed record
-      to failure_record table. Topic=library-events, Partition=0, Offset=5,
-      Exception=Failed to deserialize payload for topic [library-events]
+org.springframework.kafka.listener.ListenerExecutionFailedException: Listener failed
+Caused by: org.springframework.kafka.support.serializer.DeserializationException: failed to deserialize
+Caused by: org.apache.kafka.common.errors.SerializationException: Can't deserialize data from topic [library-events]
+Caused by: com.fasterxml.jackson.core.JsonParseException: Unrecognized token 'hello': was expecting
+  (JSON String, Number, Array, Object or token 'null', 'true' or 'false')
+  at [Source: UNKNOWN; line: 1, column: 6]
 ```
 
-> No `WARN Retry attempt` lines appear — deserialization errors are non-retryable by default so `DefaultErrorHandler` skips the backoff loop entirely and goes straight to the recoverer.
-
-### Why This Matters
-
-| Without error handling | With current `DefaultErrorHandler` |
-|---|---|
-| Consumer throws, partition blocks indefinitely | Partition never blocks — offset advances after recovery |
-| Bad message retried forever | Non-retryable — goes straight to `failure_record` table |
-| No audit trail | Record persisted with `status=OPEN` for later inspection |
-| Consumer may crash | Consumer continues processing subsequent messages |
+Key observations:
+- `maxAttempts=0` — no retries; `DefaultErrorHandler` skips the backoff loop entirely for deserialization errors
+- The failure bubbles up as a `DeserializationException` wrapping a `SerializationException` wrapping a `JsonParseException`
 
 ---
 

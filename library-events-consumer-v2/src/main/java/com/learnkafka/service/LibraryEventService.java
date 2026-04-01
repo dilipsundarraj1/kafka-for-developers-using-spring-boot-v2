@@ -2,6 +2,7 @@ package com.learnkafka.service;
 
 import com.learnkafka.domain.Book;
 import com.learnkafka.domain.LibraryEvent;
+import com.learnkafka.domain.LibraryEventType;
 import com.learnkafka.dto.LibraryEventDto;
 import com.learnkafka.dto.LibraryEventMapper;
 import com.learnkafka.dto.LibraryEventResponseDto;
@@ -34,6 +35,10 @@ public class LibraryEventService {
     public void processEvent(ConsumerRecord<Integer, LibraryEventDto> consumerRecord) {
         LibraryEventDto libraryEventDto = consumerRecord.value();
         log.info("LibraryEventDto : {}", libraryEventDto);
+
+        if (libraryEventDto.libraryEventType() == LibraryEventType.UPDATE && libraryEventDto.libraryEventId() == null) {
+            throw new IllegalArgumentException("libraryEventId is required for UPDATE events");
+        }
 
         LibraryEvent libraryEvent = LibraryEventMapper.toEntity(libraryEventDto);
 
