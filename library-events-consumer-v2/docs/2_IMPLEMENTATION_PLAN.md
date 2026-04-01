@@ -130,17 +130,17 @@ Understand how the Spring Kafka consumer works under the hood before adding adva
 #### Tasks
 1. Study `docs/3_Kafka_Consumer_Under_the_hood.md` and map concepts to current code.
 2. Trace how `@KafkaListener` receives records and how container threads are created.
-3. Verify current `AckMode.MANUAL` behavior in `LibraryEventsConsumerConfig`.
-4. Document where offset commit happens in `LibraryEventsConsumer` (`acknowledgment.acknowledge()` in `finally`).
+3. Trace record flow from poll loop to listener invocation and exception propagation.
+4. Identify integration points for acknowledgment/error handling to be formalized in Step 5 and Step 6.
 5. Identify hook points for retry/error handling to be implemented in Step 6.
 
 #### Deliverables
-- Clear mental model of consumer lifecycle: poll -> process -> ack/commit.
+- Clear mental model of consumer lifecycle: poll -> dispatch -> process -> error handling.
 - Project-specific notes linking Kafka internals to `LibraryEventsConsumer` and config.
 
 #### Acceptance Criteria
-- Team can explain partition assignment, rebalance impact, and manual-ack commit semantics in this codebase.
-- Manual-ack flow is verified in code and documented.
+- Team can explain partition assignment, rebalance impact, and listener dispatch semantics in this codebase.
+- Ownership of manual acknowledgment/commit verification is deferred to Step 5.
 
 ---
 
@@ -351,7 +351,7 @@ Path: `src/test/java/com/learnkafka/repository`
 |------|------|-------------|
 | **1** | **Kafka Consumer + Config** | Raw messages logged from `library-events` topic |
 | **2** | **DTO + Deserialization** | JSON → typed `LibraryEventDto`; consumer delegates to service |
-| **3** | **Kafka Under the Hood** | Consumer internals understood: poll loop, rebalance, manual ack/commit |
+| **3** | **Kafka Under the Hood** | Consumer internals understood: poll loop, rebalance, listener dispatch |
 | **4** | **StringDeserializer vs JsonDeserializer** | Deserializer strategy finalized and DTO deserialization validated |
 | **5** | **Consumer Groups and Consumer Offset Management** | Group behavior and offset semantics configured and validated |
 | **6** | **Tasks - Business Logic** | ADD/UPDATE branching, validation, retry, DLT |
@@ -384,7 +384,7 @@ Path: `src/test/java/com/learnkafka/repository`
 ### Step 3: Kafka Under the Hood
 - [ ] Read `docs/3_Kafka_Consumer_Under_the_hood.md`
 - [ ] Map poll/dispatch/rebalance concepts to `LibraryEventsConsumer` and container config
-- [ ] Verify and document `AckMode.MANUAL` commit flow in current code
+- [ ] Map listener invocation flow and exception propagation hooks in current code
 - [ ] Identify hook points for retry/error handling
 
 ### Step 4: StringDeserializer vs JsonDeserializer
