@@ -244,9 +244,6 @@ public ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto>
 }
 ```
 
-**Common pitfall**
-- If you forget to register `DefaultErrorHandler` on the container factory, Spring Boot's default error handling applies — which is no retry and silent message discard. Always verify the error handler is wired up.
-
 **Why it matters**
 - This is the central orchestrator of the consumer error handling strategy. All retry and recovery flows pass through it.
 

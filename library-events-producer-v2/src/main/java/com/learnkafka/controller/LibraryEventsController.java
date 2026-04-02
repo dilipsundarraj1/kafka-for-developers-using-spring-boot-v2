@@ -43,7 +43,6 @@ public class LibraryEventsController {
 
         libraryEventProducer.sendLibraryEvent(libraryEvent);
 
-        // TODO: Publish event to Kafka
         logger.info("Library event created successfully: {}", libraryEvent);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(libraryEvent);
