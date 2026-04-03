@@ -14,6 +14,7 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.listener.RetryListener;
 import org.springframework.kafka.support.serializer.DeserializationException;
 import org.springframework.util.backoff.FixedBackOff;
 
@@ -63,13 +64,26 @@ public class LibraryEventsConsumerConfig {
                 DataIntegrityViolationException.class    // duplicate key — always fails
         );
 
-        // Log each retry attempt
-        errorHandler.setRetryListeners((record, ex, deliveryAttempt) ->
-                log.warn("Retry attempt {} for record. Topic={}, Partition={}, Offset={}, Error={}",
+        // Consumer error listener — covers the full retry lifecycle
+        errorHandler.setRetryListeners(new org.springframework.kafka.listener.RetryListener() {
+
+            @Override
+            public void failedDelivery(org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record,
+                                       Exception ex, int deliveryAttempt) {
+                log.warn("Delivery attempt {} failed. Topic={}, Partition={}, Offset={}, Error={}",
                         deliveryAttempt,
                         record.topic(), record.partition(), record.offset(),
-                        ex.getMessage())
-        );
+                        ex.getMessage());
+            }
+
+            @Override
+            public void recovered(org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record,
+                                  Exception ex) {
+                log.info("Record recovered after retries. Topic={}, Partition={}, Offset={}",
+                        record.topic(), record.partition(), record.offset());
+            }
+
+        });
 
         return errorHandler;
     }

@@ -17,24 +17,25 @@ It keeps the same technical content, but organizes it in an implementation-first
   - [1) Spring Kafka Error Handling Architecture](#1-spring-kafka-error-handling-architecture)
   - [2) DefaultErrorHandler](#2-defaulterrorhandler)
   - [3) Retry with BackOff Strategies](#3-retry-with-backoff-strategies)
+  - [4) RetryListener](#4-retrylistener)
 - [Part 2: Error Classification](#part-2-error-classification)
-  - [4) Types of Errors in a Kafka Consumer](#4-types-of-errors-in-a-kafka-consumer)
-  - [5) Classifying Retryable vs Non-Retryable Exceptions](#5-classifying-retryable-vs-non-retryable-exceptions)
+  - [5) Types of Errors in a Kafka Consumer](#5-types-of-errors-in-a-kafka-consumer)
+  - [6) Classifying Retryable vs Non-Retryable Exceptions](#6-classifying-retryable-vs-non-retryable-exceptions)
     - [FixedBackOff](#fixedbackoff)
     - [ExponentialBackOff](#exponentialbackoff)
     - [Which One to Use?](#which-one-to-use)
 - [Part 3: Recovery Strategies](#part-3-recovery-strategies)
-  - [6) Dead Letter Topic (DLT)](#6-dead-letter-topic-dlt)
-  - [7) Custom Recovery Strategies](#7-custom-recovery-strategies)
+  - [7) Dead Letter Topic (DLT)](#7-dead-letter-topic-dlt)
+  - [8) Custom Recovery Strategies](#8-custom-recovery-strategies)
     - [Log and Skip](#log-and-skip)
     - [Persist to a Failure Table](#persist-to-a-failure-table)
     - [Publish to DLT + Persist](#publish-to-dlt--persist)
 - [Part 4: Wiring It Together](#part-4-wiring-it-together)
-  - [8) Manual Acknowledgment and Error Handling](#8-manual-acknowledgment-and-error-handling)
-  - [9) Full Configuration: LibraryEventsConsumerConfig.java](#9-full-configuration-libraryeventsconsumerconfigjava)
-  - [10) End-to-End Flow with Error Handling](#10-end-to-end-flow-with-error-handling)
+  - [9) Manual Acknowledgment and Error Handling](#9-manual-acknowledgment-and-error-handling)
+  - [10) Full Configuration: LibraryEventsConsumerConfig.java](#10-full-configuration-libraryeventsconsumerconfigjava)
+  - [11) End-to-End Flow with Error Handling](#11-end-to-end-flow-with-error-handling)
 - [Part 5: Testing Error Handling](#part-5-testing-error-handling)
-  - [11) Retry and Recovery in Tests](#11-retry-and-recovery-in-tests)
+  - [12) Retry and Recovery in Tests](#12-retry-and-recovery-in-tests)
 - [Suggested Implementation Order](#suggested-implementation-order)
 - [Implementation Checklist](#implementation-checklist)
 
@@ -46,10 +47,11 @@ Use this in sequence while implementing:
 
 1. Understand the Spring Kafka error handling architecture — how `DefaultErrorHandler`, `BackOff`, and `RecoveryCallback` fit together (Part 1, Section 1).
 2. Configure `DefaultErrorHandler` with the right `BackOff` strategy and wire it into `ConcurrentKafkaListenerContainerFactory` (Part 1, Sections 2–3).
-3. Classify your exceptions — decide which errors are retryable and which go straight to recovery (Part 2, Sections 4–5).
-4. Wire in a `DeadLetterPublishingRecoverer` and choose a recovery strategy (Part 3, Sections 6–7).
-5. Understand how manual acknowledgment interacts with the error handler, then wire everything together (Part 4, Sections 8–10).
-6. Validate behavior with retry- and DLT-focused integration tests (Part 5, Section 11).
+3. Add a `RetryListener` for observability — log each delivery attempt as it happens (Part 1, Section 4).
+4. Classify your exceptions — decide which errors are retryable and which go straight to recovery (Part 2, Sections 5–6).
+5. Wire in a `DeadLetterPublishingRecoverer` and choose a recovery strategy (Part 3, Sections 7–8).
+6. Understand how manual acknowledgment interacts with the error handler, then wire everything together (Part 4, Sections 9–11).
+7. Validate behavior with retry- and DLT-focused integration tests (Part 5, Section 12).
 
 ---
 
@@ -424,7 +426,7 @@ These are **permanent failures** — retrying will never succeed. Routing these 
 
 ---
 
-### 5) Classifying Retryable vs Non-Retryable Exceptions
+### 6) Classifying Retryable vs Non-Retryable Exceptions
 
 **What**
 - `DefaultErrorHandler` provides two methods to register exception classifications. Use these to tell the error handler which exceptions should bypass retries entirely.
@@ -458,7 +460,7 @@ errorHandler.addNotRetryableExceptions(
 
 ## Part 3: Recovery Strategies
 
-### 6) Dead Letter Topic (DLT)
+### 7) Dead Letter Topic (DLT)
 
 **What**
 - A Dead Letter Topic (DLT) is a separate Kafka topic where messages that could not be processed — even after all retry attempts — are published for later inspection, reprocessing, or alerting.
@@ -537,7 +539,7 @@ public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEve
 
 ---
 
-### 7) Custom Recovery Strategies
+### 8) Custom Recovery Strategies
 
 **What**
 - `DeadLetterPublishingRecoverer` is the most common recovery strategy, but any behavior can be implemented using a `ConsumerRecordRecoverer` lambda or class.
@@ -653,7 +655,7 @@ When the listener throws an exception, `DefaultErrorHandler` intercepts it. The 
 
 ---
 
-### 9) Full Configuration: LibraryEventsConsumerConfig.java
+### 10) Full Configuration: LibraryEventsConsumerConfig.java
 
 The complete updated `LibraryEventsConsumerConfig` with retry, DLT, and non-retryable exception classification:
 
@@ -748,7 +750,7 @@ public class LibraryEventsConsumerConfig {
 
 ---
 
-### 10) End-to-End Flow with Error Handling
+### 11) End-to-End Flow with Error Handling
 
 ```
 Kafka Broker: library-events
@@ -798,7 +800,7 @@ Next message consumed                                        v
 
 ## Part 5: Testing Error Handling
 
-### 11) Retry and Recovery in Tests
+### 12) Retry and Recovery in Tests
 
 **What**
 - Testing retry and recovery behavior requires injecting `@SpyBean` on the consumer or service to simulate failures, verifying retry count, and verifying DLT message delivery.
@@ -887,12 +889,12 @@ void onMessage_nonRetryableException_shouldGoToDLTImmediately() throws Exception
 ## Suggested Implementation Order
 
 1. **Classify exceptions** — decide which are retryable vs non-retryable for your domain.
-3. **Configure `FixedBackOff`** — start simple with 3 retries at 1 second.
+2. **Configure `FixedBackOff`** — start simple with 3 retries at 1 second.
+3. **Add `RetryListener`** — log each delivery attempt for real-time observability.
 4. **Wire `DeadLetterPublishingRecoverer`** — DLT is the safety net for all unrecoverable failures.
-5. **Register `DefaultErrorHandler`** — connect backoff and recoverer to the container factory.
+5. **Register `DefaultErrorHandler`** — connect backoff, retry listener, and recoverer to the container factory.
 6. **Add `addNotRetryableExceptions`** — exclude permanent failures from retry.
-7. **Add `RetryListener`** — log retry attempts for observability.
-8. **Write failure-injection tests** — verify retry count and DLT delivery with `@SpyBean`.
+7. **Write failure-injection tests** — verify retry count and DLT delivery with `@SpyBean`.
 
 ---
 
