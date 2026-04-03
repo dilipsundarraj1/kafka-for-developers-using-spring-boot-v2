@@ -2,6 +2,7 @@ package com.learnkafka.config;
 
 import com.learnkafka.dto.LibraryEventDto;
 import com.learnkafka.service.FailureRecordService;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -65,11 +66,10 @@ public class LibraryEventsConsumerConfig {
         );
 
         // Consumer error listener — covers the full retry lifecycle
-        errorHandler.setRetryListeners(new org.springframework.kafka.listener.RetryListener() {
+        errorHandler.setRetryListeners(new RetryListener() {
 
             @Override
-            public void failedDelivery(org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record,
-                                       Exception ex, int deliveryAttempt) {
+            public void failedDelivery(ConsumerRecord<?, ?> record, Exception ex, int deliveryAttempt) {
                 log.warn("Delivery attempt {} failed. Topic={}, Partition={}, Offset={}, Error={}",
                         deliveryAttempt,
                         record.topic(), record.partition(), record.offset(),
@@ -77,12 +77,17 @@ public class LibraryEventsConsumerConfig {
             }
 
             @Override
-            public void recovered(org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record,
-                                  Exception ex) {
+            public void recovered(ConsumerRecord<?, ?> record, Exception ex) {
                 log.info("Record recovered after retries. Topic={}, Partition={}, Offset={}",
                         record.topic(), record.partition(), record.offset());
             }
 
+            @Override
+            public void recoveryFailed(ConsumerRecord<?, ?> record, Exception original, Exception failure) {
+                log.error("Record recovery failed. Topic={}, Partition={}, Offset={}, OriginalError={}, RecoveryError={}",
+                        record.topic(), record.partition(), record.offset(),
+                        original.getMessage(), failure.getMessage());
+            }
         });
 
         return errorHandler;

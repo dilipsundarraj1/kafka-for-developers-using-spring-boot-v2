@@ -386,9 +386,85 @@ DefaultErrorHandler errorHandler =
 
 ---
 
+### 4) RetryListener
+
+**What**
+- `RetryListener` is a callback interface on `DefaultErrorHandler` that fires on every failed delivery attempt. It gives you a hook to log, meter, or alert on each retry in real time — without modifying the listener or service.
+
+**How it works internally**
+- `DefaultErrorHandler` calls `RetryListener.failedDelivery(record, exception, deliveryAttempt)` each time a delivery attempt fails (including the first attempt before any backoff).
+- `deliveryAttempt` is 1-based — so `1` means the first failure (original delivery), `2` means after the first retry, and so on.
+- `RetryListener.recovered(record, exception)` fires when recovery succeeds (e.g., the record was published to DLT).
+- `RetryListener.recoveryFailed(record, original, failure)` fires when the recoverer itself throws — receives both the original listener exception and the recoverer exception; the offset still advances, but the failure is logged.
+
+**Retry attempt vs delivery attempt numbering**
+
+```
+Message received
+    ↓
+Attempt 1 (original) → fails → failedDelivery(record, ex, deliveryAttempt=1)
+    ↓ wait 1s (FixedBackOff)
+Attempt 2 (retry 1)  → fails → failedDelivery(record, ex, deliveryAttempt=2)
+    ↓ wait 1s
+Attempt 3 (retry 2)  → fails → failedDelivery(record, ex, deliveryAttempt=3)
+    ↓ wait 1s
+Attempt 4 (retry 3)  → fails → failedDelivery(record, ex, deliveryAttempt=4)
+    ↓
+All retries exhausted → recoverer invoked → recovered(record, ex)
+```
+
+**⚠️ Why you see "Delivery attempt 1" only once for non-retryable exceptions**
+- When the thrown exception matches `addNotRetryableExceptions(...)`, `DefaultErrorHandler` **skips the backoff loop entirely** — `failedDelivery` is called once (attempt 1) and the recoverer is invoked immediately. No attempt 2, 3, or 4.
+- This is correct behavior — it confirms the exception was classified as non-retryable and went straight to recovery.
+
+**How to register a RetryListener (lambda — single callback):**
+```java
+errorHandler.setRetryListeners((record, ex, deliveryAttempt) ->
+    log.warn("Delivery attempt {} failed. Topic={}, Partition={}, Offset={}, Error={}",
+             deliveryAttempt,
+             record.topic(), record.partition(), record.offset(),
+             ex.getMessage())
+);
+```
+
+**Full RetryListener with all three callbacks:**
+```java
+errorHandler.setRetryListeners(new RetryListener() {
+
+    @Override
+    public void failedDelivery(ConsumerRecord<?, ?> record, Exception ex, int deliveryAttempt) {
+        log.warn("Delivery attempt {} failed. Topic={}, Partition={}, Offset={}, Error={}",
+                 deliveryAttempt,
+                 record.topic(), record.partition(), record.offset(),
+                 ex.getMessage());
+    }
+
+    @Override
+    public void recovered(ConsumerRecord<?, ?> record, Exception ex) {
+        log.info("Record recovered after retries. Topic={}, Partition={}, Offset={}",
+                 record.topic(), record.partition(), record.offset());
+    }
+
+    @Override
+    public void recoveryFailed(ConsumerRecord<?, ?> record, Exception original, Exception failure) {
+        log.error("Record recovery failed. Topic={}, Partition={}, Offset={}, OriginalError={}, RecoveryError={}",
+                  record.topic(), record.partition(), record.offset(),
+                  original.getMessage(), failure.getMessage());
+    }
+});
+```
+
+**Common pitfall**
+- Using a lambda registers only `failedDelivery`. If you need `recovered` or `recoveryFailed` callbacks, implement the full `RetryListener` interface as shown above.
+
+**Why it matters**
+- Without a `RetryListener`, retries happen silently. In production, you need to know when a message is being retried, how many times, and whether recovery succeeded — before it becomes an incident.
+
+---
+
 ## Part 2: Error Classification
 
-### 4) Types of Errors in a Kafka Consumer
+### 5) Types of Errors in a Kafka Consumer
 
 **What**
 - Consumer failures fall into two categories: transient (retryable) and permanent (non-retryable). Getting this classification right determines whether a retry wastes time or recovers successfully.
@@ -608,7 +684,7 @@ ConsumerRecordRecoverer dltAndPersist = (record, exception) -> {
 
 ## Part 4: Wiring It Together
 
-### 8) Manual Acknowledgment and Error Handling
+### 9) Manual Acknowledgment and Error Handling
 
 **What**
 - With `MANUAL` acknowledgment mode, the listener controls when offsets are committed. `acknowledge()` must only be called on the success path so that exceptions propagate to `DefaultErrorHandler` for retry and recovery.
