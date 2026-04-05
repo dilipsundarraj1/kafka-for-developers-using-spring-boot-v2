@@ -25,11 +25,13 @@ It keeps the same technical content, but organizes it in an implementation-first
     - [ExponentialBackOff](#exponentialbackoff)
     - [Which One to Use?](#which-one-to-use)
 - [Part 3: Recovery Strategies](#part-3-recovery-strategies)
+  - [Overview](#overview)
   - [7) Dead Letter Topic (DLT)](#7-dead-letter-topic-dlt)
   - [8) Custom Recovery Strategies](#8-custom-recovery-strategies)
     - [Log and Skip](#log-and-skip)
     - [Persist to a Failure Table](#persist-to-a-failure-table)
     - [Publish to DLT + Persist](#publish-to-dlt--persist)
+  - [Bonus) Retrying Failed Records from the Database](#bonus-retrying-failed-records-from-the-database)
 - [Part 4: Wiring It Together](#part-4-wiring-it-together)
   - [9) Manual Acknowledgment and Error Handling](#9-manual-acknowledgment-and-error-handling)
   - [10) Full Configuration: LibraryEventsConsumerConfig.java](#10-full-configuration-libraryeventsconsumerconfigjava)
@@ -536,6 +538,21 @@ errorHandler.addNotRetryableExceptions(
 
 ## Part 3: Recovery Strategies
 
+### Overview
+
+When retries are exhausted, a **`ConsumerRecordRecoverer`** determines what happens to the failed record. Spring Kafka provides one built-in recoverer and allows you to implement any custom behavior via a lambda.
+
+| Strategy | What happens | When to use |
+|---|---|---|
+| **Dead Letter Topic (DLT)** | Failed record is published to `<topic>.DLT` with failure metadata headers | Default choice — gives you Kafka-native replay and a full audit trail |
+| **Log and Skip** | Log the failure and advance the offset | Non-critical events (metrics, logs) where occasional loss is acceptable |
+| **Persist to Failure Table** | Save failed record to a DB table for inspection and manual replay | When you need operational visibility and replay via admin/scheduler |
+| **DLT + Persist** | Publish to DLT *and* save to DB | Production systems needing both Kafka-based replay and operational dashboards |
+
+**Key contract:** the recoverer is called once after all retry attempts are exhausted. After it returns (or throws), the offset advances and the partition unblocks. If the recoverer itself throws, the exception propagates back to `DefaultErrorHandler` — wrap risky calls (e.g. DB writes) in a try/catch to ensure the offset always advances.
+
+---
+
 ### 7) Dead Letter Topic (DLT)
 
 **What**
@@ -679,6 +696,167 @@ ConsumerRecordRecoverer dltAndPersist = (record, exception) -> {
 
 **Why it matters**
 - The recovery strategy is the last line of defense. Choosing the right one determines whether failed messages disappear silently, accumulate in a DLT for replay, or are visible in your operational database.
+
+---
+
+### Bonus) Retrying Failed Records from the Database
+
+#### Context: why this goes beyond our app
+
+In this application the downstream work after consuming a message is a **database write** — save or update a `LibraryEvent` row. But in real-world services the downstream call is just as likely to be a **REST API call** to another service. If that service is temporarily down, the record fails and lands in the `failure_record` table with status `OPEN`. The scheduled retry below will keep attempting until that service comes back up and the call succeeds — at which point the record is marked `FIXED` and the message is effectively delivered. This is the core value of the pattern: **transient downstream failures become retryable, not permanent losses.**
+
+---
+
+#### How it works — step by step
+
+```
+Step 1 — Message consumed from Kafka
+─────────────────────────────────────────────────────────────────────
+LibraryEventsConsumer.onMessage()
+  → libraryEventService.processEvent(record)
+      → downstream call throws (DB constraint, REST service down, etc.)
+  → exception propagates to DefaultErrorHandler
+
+Step 2 — DefaultErrorHandler retries (FixedBackOff: 1s × 3 attempts)
+─────────────────────────────────────────────────────────────────────
+  Attempt 1 → fails
+  Attempt 2 → fails
+  Attempt 3 → fails
+  All retries exhausted → recoverer called
+
+Step 3 — Recoverer persists the failure
+─────────────────────────────────────────────────────────────────────
+  ConsumerRecordRecoverer (custom)
+    → FailureRecordService.saveFailureRecord(record, exception)
+        → INSERT into failure_record (status = 'OPEN')
+    → Offset committed → partition unblocked → next message consumed
+
+Step 4 — Scheduler wakes up every 10 seconds
+─────────────────────────────────────────────────────────────────────
+  LibraryEventsScheduler.retryFailedRecords()
+    → FailureRecordService.retryFailedRecords()
+        → SELECT * FROM failure_record WHERE status = 'OPEN'
+        → For each OPEN record:
+            → Deserialize errorRecord JSON back to LibraryEventDto
+            → Reconstruct ConsumerRecord (same topic/partition/offset/key/value)
+            → libraryEventService.processEvent(consumerRecord)
+                → SUCCESS  → UPDATE failure_record SET status = 'FIXED'
+                → FAILURE  → log error, leave status = 'OPEN' (retried next cycle)
+```
+
+---
+
+#### The three classes involved
+
+**`FailureRecord` (entity)**
+
+| Column | Type | Notes |
+|---|---|---|
+| `topic` | String | Original Kafka topic |
+| `key_value` | Integer | Message key |
+| `error_record` | TEXT | Full JSON of the failed payload |
+| `partition` | Integer | Original partition |
+| `offset_value` | Long | Original offset |
+| `exception` | TEXT | Exception message at time of failure |
+| `status` | String | `OPEN` → not yet fixed, `FIXED` → successfully retried |
+| `created_at` | LocalDateTime | Set once at insert |
+| `updated_at` | LocalDateTime | Updated on every status change |
+
+**`FailureRecordService`**
+
+```java
+// Called by the recoverer — saves the failed record
+public void saveFailureRecord(ConsumerRecord<Integer, LibraryEventDto> record,
+                               Exception exception) { ... }
+
+// Called by the scheduler — finds all OPEN records and replays them
+public void retryFailedRecords() {
+    List<FailureRecord> openRecords = failureRecordRepository.findAllByStatus(OPEN);
+
+    openRecords.forEach(failureRecord -> {
+        try {
+            LibraryEventDto dto = objectMapper.readValue(
+                    failureRecord.getErrorRecord(), LibraryEventDto.class);
+
+            ConsumerRecord<Integer, LibraryEventDto> consumerRecord =
+                    new ConsumerRecord<>(
+                            failureRecord.getTopic(),
+                            failureRecord.getPartition(),
+                            failureRecord.getOffsetValue(),
+                            failureRecord.getKeyValue(),
+                            dto
+                    );
+
+            libraryEventService.processEvent(consumerRecord); // replay
+
+            failureRecord.setStatus(FIXED);
+            failureRecordRepository.save(failureRecord);      // mark done
+
+        } catch (Exception e) {
+            log.error("Retry failed for id={}: {}", failureRecord.getId(), e.getMessage());
+            // status stays OPEN — will be retried next cycle
+        }
+    });
+}
+```
+
+**`LibraryEventsScheduler`**
+
+```java
+@Component
+public class LibraryEventsScheduler {
+
+    private final FailureRecordService failureRecordService;
+
+    // Runs every 10 seconds — retries all OPEN failure records
+    @Scheduled(fixedRateString = "${retry.scheduler.fixed-rate:10000}")
+    public void retryFailedRecords() {
+        log.info("Scheduler: starting retry of OPEN failure records");
+        failureRecordService.retryFailedRecords();
+        log.info("Scheduler: completed retry run");
+    }
+}
+```
+
+Enable scheduling in your main class or any `@Configuration`:
+```java
+@EnableScheduling
+```
+
+---
+
+#### Why the status field matters
+
+```
+OPEN   → failure was recorded, not yet successfully retried
+FIXED  → retry succeeded — downstream processed the event
+
+Nothing is deleted. The table is a permanent audit log.
+You can query it at any time:
+
+  SELECT * FROM failure_record WHERE status = 'OPEN';   -- backlog
+  SELECT * FROM failure_record WHERE status = 'FIXED';  -- resolved
+```
+
+---
+
+#### Common pitfall — retrying non-retryable errors
+
+If a record failed due to a permanent error (e.g. `IllegalArgumentException` — bad payload), the scheduler will retry it forever and it will never move to `FIXED`. Distinguish permanent vs. transient failures at the recoverer level:
+
+```java
+ConsumerRecordRecoverer recoverer = (record, exception) -> {
+    if (exception instanceof IllegalArgumentException) {
+        // permanent — save with status DEAD, not OPEN
+        failureRecordService.saveWithStatus(record, exception, "DEAD");
+    } else {
+        // transient — save as OPEN so the scheduler retries it
+        failureRecordService.saveFailureRecord(record, exception);
+    }
+};
+```
+
+The scheduler query then only picks up `OPEN` records and never wastes cycles on permanently bad payloads.
 
 ---
 
