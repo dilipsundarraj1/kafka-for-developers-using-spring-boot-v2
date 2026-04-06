@@ -703,7 +703,12 @@ ConsumerRecordRecoverer dltAndPersist = (record, exception) -> {
 
 #### Context: why this goes beyond our app
 
-In this application the downstream work after consuming a message is a **database write** — save or update a `LibraryEvent` row. But in real-world services the downstream call is just as likely to be a **REST API call** to another service. If that service is temporarily down, the record fails and lands in the `failure_record` table with status `OPEN`. The scheduled retry below will keep attempting until that service comes back up and the call succeeds — at which point the record is marked `FIXED` and the message is effectively delivered. This is the core value of the pattern: **transient downstream failures become retryable, not permanent losses.**
+- In this application, the downstream work after consuming a message is a **database write** (save or update a `LibraryEvent` row).
+- In real-world services, that downstream step is often a **REST API call** to another service.
+- If the downstream service is temporarily unavailable, processing fails and the record is stored in `failure_record` with status `OPEN`.
+- The scheduled retry process keeps attempting the record until the downstream service recovers and processing succeeds.
+- On success, the record is marked `FIXED`, and the message is effectively delivered.
+- Core value of this pattern: **transient downstream failures become retryable, not permanent losses**.
 
 ---
 
