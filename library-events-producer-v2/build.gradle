@@ -30,7 +30,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 
 	//docker
-	developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
+	//developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
 
 	//test
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'

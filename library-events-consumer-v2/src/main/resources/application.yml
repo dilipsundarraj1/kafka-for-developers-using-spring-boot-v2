@@ -36,3 +36,9 @@ spring:
 retry:
   scheduler:
     fixed-rate: 10000   # ms — how often to retry OPEN failure records
+
+app:
+  kafka:
+    recovery:
+      mode: failure-table # options: failure-table | dlt | both
+

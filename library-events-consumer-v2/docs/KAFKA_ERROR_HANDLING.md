@@ -540,16 +540,29 @@ errorHandler.addNotRetryableExceptions(
 
 ### Overview
 
-When retries are exhausted, a **`ConsumerRecordRecoverer`** determines what happens to the failed record. Spring Kafka provides one built-in recoverer and allows you to implement any custom behavior via a lambda.
+When retries are exhausted, a **`ConsumerRecordRecoverer`** determines what happens to the failed record. In this project, recovery is **configurable** via `app.kafka.recovery.mode`.
 
 | Strategy | What happens | When to use |
 |---|---|---|
-| **Dead Letter Topic (DLT)** | Failed record is published to `<topic>.DLT` with failure metadata headers | Default choice — gives you Kafka-native replay and a full audit trail |
-| **Log and Skip** | Log the failure and advance the offset | Non-critical events (metrics, logs) where occasional loss is acceptable |
-| **Persist to Failure Table** | Save failed record to a DB table for inspection and manual replay | When you need operational visibility and replay via admin/scheduler |
-| **DLT + Persist** | Publish to DLT *and* save to DB | Production systems needing both Kafka-based replay and operational dashboards |
+| **`failure-table`** (default) | Save failed record to `failure_record` with status `OPEN` | Current teaching default for scheduler-based retry flow |
+| **`dlt`** | Publish failed record to `<topic>.DLT` with failure metadata headers | Kafka-native replay and audit trail |
+| **`both`** | Persist to `failure_record` and publish to DLT | Demonstrate/operate both recovery paths together |
+| **Custom lambda** | Any custom side effect (log/alert/persist elsewhere) | Advanced or domain-specific recovery behavior |
 
-**Key contract:** the recoverer is called once after all retry attempts are exhausted. After it returns (or throws), the offset advances and the partition unblocks. If the recoverer itself throws, the exception propagates back to `DefaultErrorHandler` — wrap risky calls (e.g. DB writes) in a try/catch to ensure the offset always advances.
+**Key contract:** the recoverer is called once after all retry attempts are exhausted. After it returns (or throws), the offset advances and the partition unblocks. If recovery code throws, the failure is reported via `RetryListener.recoveryFailed(...)`.
+
+**Recovery mode used by this codebase**
+
+```yaml
+app:
+  kafka:
+    recovery:
+      mode: failure-table # options: failure-table | dlt | both
+```
+
+- `failure-table` (default): `FailureRecordService.saveFailureRecord(...)`
+- `dlt`: `DeadLetterPublishingRecoverer.accept(...)`
+- `both`: executes both paths in sequence
 
 ---
 
@@ -557,6 +570,7 @@ When retries are exhausted, a **`ConsumerRecordRecoverer`** determines what happ
 
 **What**
 - A Dead Letter Topic (DLT) is a separate Kafka topic where messages that could not be processed — even after all retry attempts — are published for later inspection, reprocessing, or alerting.
+- In this project, DLT is enabled when `app.kafka.recovery.mode` is `dlt` or `both`.
 
 ```
 library-events          ← original topic (messages consumed here)
@@ -602,12 +616,15 @@ docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
 
 > `kafka1:19092` is the internal listener address used inside the Docker network (see `KAFKA_ADVERTISED_LISTENERS` in `docker-compose-multi-broker.yml`). `localhost:9092` is only reachable from the host machine, not from within the container.
 
-**Basic configuration:**
+**Configuration in this project (DLT-capable):**
 ```java
 @Bean
-public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEventDto> kafkaTemplate) {
-    return new DeadLetterPublishingRecoverer(kafkaTemplate);
-    // Publishes to library-events.DLT by default
+public DeadLetterPublishingRecoverer deadLetterPublishingRecoverer(
+        KafkaTemplate<Integer, Object> dltKafkaTemplate) {
+    return new DeadLetterPublishingRecoverer(
+            dltKafkaTemplate,
+            (record, ex) -> new TopicPartition(record.topic() + ".DLT", record.partition())
+    );
 }
 ```
 
@@ -635,7 +652,29 @@ public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEve
 ### 8) Custom Recovery Strategies
 
 **What**
-- `DeadLetterPublishingRecoverer` is the most common recovery strategy, but any behavior can be implemented using a `ConsumerRecordRecoverer` lambda or class.
+- `DeadLetterPublishingRecoverer` is one recovery strategy. In this project, a mode-driven `ConsumerRecordRecoverer` chooses between persistence, DLT, or both.
+
+#### Current implementation (mode-driven recoverer)
+
+```java
+@Bean
+public ConsumerRecordRecoverer consumerRecordRecoverer(
+        DeadLetterPublishingRecoverer deadLetterPublishingRecoverer) {
+
+    RecoveryMode mode = RecoveryMode.from(recoveryMode);
+
+    return (record, exception) -> {
+        switch (mode) {
+            case DLT -> publishToDlt(record, exception, deadLetterPublishingRecoverer);
+            case BOTH -> {
+                persistFailureRecord(record, exception);
+                publishToDlt(record, exception, deadLetterPublishingRecoverer);
+            }
+            case FAILURE_TABLE -> persistFailureRecord(record, exception);
+        }
+    };
+}
+```
 
 #### Log and Skip
 
@@ -729,11 +768,12 @@ Step 2 — DefaultErrorHandler retries (FixedBackOff: 1s × 3 attempts)
   Attempt 3 → fails
   All retries exhausted → recoverer called
 
-Step 3 — Recoverer persists the failure
+Step 3 — Recoverer handles the failure (mode-dependent)
 ─────────────────────────────────────────────────────────────────────
-  ConsumerRecordRecoverer (custom)
-    → FailureRecordService.saveFailureRecord(record, exception)
-        → INSERT into failure_record (status = 'OPEN')
+  ConsumerRecordRecoverer
+    → mode=failure-table (default): save to failure_record (status='OPEN')
+    → mode=dlt: publish to library-events.DLT
+    → mode=both: save to failure_record + publish to DLT
     → Offset committed → partition unblocked → next message consumed
 
 Step 4 — Scheduler wakes up every 10 seconds
