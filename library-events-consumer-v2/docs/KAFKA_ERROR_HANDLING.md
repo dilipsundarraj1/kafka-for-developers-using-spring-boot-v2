@@ -540,9 +540,18 @@ errorHandler.addNotRetryableExceptions(
 
 ### Overview
 
-When retries are exhausted, a **`ConsumerRecordRecoverer`** determines what happens to the failed record. In this project, recovery is **configurable** via `app.kafka.recovery.mode`.
+When retries are exhausted, a **`ConsumerRecordRecoverer`** determines what happens to the failed record. There are four general recovery patterns in Kafka consumer applications:
 
 | Strategy | What happens | When to use |
+|---|---|---|
+| **Dead Letter Topic (DLT)** | Failed record is published to `<topic>.DLT` with failure metadata headers | Default choice — gives you Kafka-native replay and a full audit trail |
+| **Log and Skip** | Log the failure and advance the offset | Non-critical events (metrics, logs) where occasional loss is acceptable |
+| **Persist to Failure Table** | Save failed record to a DB table for inspection and manual replay | When you need operational visibility and replay via admin/scheduler |
+| **DLT + Persist** | Publish to DLT *and* save to DB | Production systems needing both Kafka-based replay and operational dashboards |
+
+In this project, recovery is **configurable** via `app.kafka.recovery.mode`. The supported modes map directly to those four patterns:
+
+| Mode | What happens | When to use |
 |---|---|---|
 | **`failure-table`** (default) | Save failed record to `failure_record` with status `OPEN` | Current teaching default for scheduler-based retry flow |
 | **`dlt`** | Publish failed record to `<topic>.DLT` with failure metadata headers | Kafka-native replay and audit trail |
