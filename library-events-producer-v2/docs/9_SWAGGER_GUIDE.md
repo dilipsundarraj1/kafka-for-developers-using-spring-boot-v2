@@ -1,5 +1,23 @@
 # Swagger / OpenAPI 3 — Why & How
 
+<!-- TOC -->
+* [Swagger / OpenAPI 3 — Why & How](#swagger--openapi-3--why--how)
+  * [Why Swagger (OpenAPI) Is Better Than Plain REST Documentation](#why-swagger-openapi-is-better-than-plain-rest-documentation)
+    * [1. Living Documentation, Not Stale Wiki Pages](#1-living-documentation-not-stale-wiki-pages)
+    * [2. Interactive Try-It-Out UI](#2-interactive-try-it-out-ui)
+    * [3. Machine-Readable Contract (`/api-docs`)](#3-machine-readable-contract-api-docs)
+    * [4. Standardized Validation Visibility](#4-standardized-validation-visibility)
+    * [5. Better Than Alternatives](#5-better-than-alternatives)
+  * [Implementation in This Project](#implementation-in-this-project)
+    * [1. Dependency (`build.gradle`)](#1-dependency-buildgradle)
+    * [2. OpenAPI Bean (`OpenApiConfig.java`)](#2-openapi-bean-openapiconfigjava)
+    * [3. Controller Annotations](#3-controller-annotations)
+    * [4. application.yml Configuration](#4-applicationyml-configuration)
+    * [5. Accessing the Docs](#5-accessing-the-docs)
+  * [Disabling Swagger in Production](#disabling-swagger-in-production)
+  * [Generating a Client SDK from the Spec](#generating-a-client-sdk-from-the-spec)
+<!-- TOC -->
+
 ## Why Swagger (OpenAPI) Is Better Than Plain REST Documentation
 
 ### 1. Living Documentation, Not Stale Wiki Pages
