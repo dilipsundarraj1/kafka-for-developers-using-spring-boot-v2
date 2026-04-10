@@ -1,0 +1,10 @@
+spring:
+  kafka:
+    bootstrap-servers: stage-broker1:9092,stage-broker2:9092
+    topic: library-events
+    producer:
+      acks: all
+      retries: 15
+      properties:
+        retry.backoff.ms: 2000
+

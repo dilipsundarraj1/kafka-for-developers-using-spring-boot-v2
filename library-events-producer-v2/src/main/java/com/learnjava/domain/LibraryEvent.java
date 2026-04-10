@@ -1,0 +1,16 @@
+package com.learnjava.domain;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+
+public record LibraryEvent(
+        Long libraryEventId,
+
+        @NotNull(message = "eventType is required")
+        LibraryEventType eventType,
+
+        @Valid
+        @NotNull(message = "book is required")
+        Book book
+) {
+}

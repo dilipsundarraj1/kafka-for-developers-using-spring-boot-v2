@@ -1,8 +1,10 @@
 spring:
   kafka:
-    bootstrap-servers: kafka.prod.com:9092
-
-library:
-  events:
+    bootstrap-servers: prod-broker1:9092,prod-broker2:9092,prod-broker3:9092
     topic: library-events
+    producer:
+      acks: all
+      retries: 20
+      properties:
+        retry.backoff.ms: 3000
 
