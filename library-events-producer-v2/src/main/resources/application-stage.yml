@@ -1,6 +1,6 @@
 spring:
   kafka:
-    bootstrap-servers: stage-broker1:9092,stage-broker2:9092
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:stage-broker1:9092,stage-broker2:9092}
     topic: library-events
     producer:
       acks: all
