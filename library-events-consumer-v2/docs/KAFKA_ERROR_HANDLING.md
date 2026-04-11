@@ -661,29 +661,7 @@ public DeadLetterPublishingRecoverer recoverer(KafkaTemplate<Integer, LibraryEve
 ### 8) Custom Recovery Strategies
 
 **What**
-- `DeadLetterPublishingRecoverer` is one recovery strategy. In this project, a mode-driven `ConsumerRecordRecoverer` chooses between persistence, DLT, or both.
-
-#### Current implementation (mode-driven recoverer)
-
-```java
-@Bean
-public ConsumerRecordRecoverer consumerRecordRecoverer(
-        DeadLetterPublishingRecoverer deadLetterPublishingRecoverer) {
-
-    RecoveryMode mode = RecoveryMode.from(recoveryMode);
-
-    return (record, exception) -> {
-        switch (mode) {
-            case DLT -> publishToDlt(record, exception, deadLetterPublishingRecoverer);
-            case BOTH -> {
-                persistFailureRecord(record, exception);
-                publishToDlt(record, exception, deadLetterPublishingRecoverer);
-            }
-            case FAILURE_TABLE -> persistFailureRecord(record, exception);
-        }
-    };
-}
-```
+- `DeadLetterPublishingRecoverer` is one recovery strategy. Beyond DLT, there are two more common patterns worth knowing. Each is a standalone `ConsumerRecordRecoverer` lambda you can wire directly into `DefaultErrorHandler`.
 
 #### Log and Skip
 
@@ -694,6 +672,8 @@ ConsumerRecordRecoverer logAndSkip = (record, exception) -> {
     log.error("Recovery: skipping failed record. Topic={}, Partition={}, Offset={}, Exception={}",
               record.topic(), record.partition(), record.offset(), exception.getMessage());
 };
+
+DefaultErrorHandler errorHandler = new DefaultErrorHandler(logAndSkip, fixedBackOff);
 ```
 
 **When to use:** Metrics events or logging records where the occasional loss under extreme failure is acceptable.
@@ -705,16 +685,10 @@ Persist failed messages to a database table for inspection and manual reprocessi
 ```java
 ConsumerRecordRecoverer persistToFailureTable = (record, exception) -> {
     log.error("Recovery: persisting failed record to failure table. Offset={}", record.offset());
-    FailedEvent failedEvent = new FailedEvent(
-        record.topic(),
-        record.partition(),
-        record.offset(),
-        record.value().toString(),
-        exception.getMessage(),
-        LocalDateTime.now()
-    );
-    failedEventRepository.save(failedEvent);
+    failureRecordService.saveFailureRecord(record, exception);
 };
+
+DefaultErrorHandler errorHandler = new DefaultErrorHandler(persistToFailureTable, fixedBackOff);
 ```
 
 **When to use:** When you need operational visibility and the ability to replay specific failed records via an admin endpoint or scheduled job.
@@ -729,21 +703,57 @@ ConsumerRecordRecoverer dltAndPersist = (record, exception) -> {
     deadLetterPublishingRecoverer.accept(record, exception);
 
     // 2. persist to failure table for operational visibility
-    FailedEvent failedEvent = new FailedEvent(...);
-    failedEventRepository.save(failedEvent);
+    failureRecordService.saveFailureRecord(record, exception);
 
     log.error("Recovery: published to DLT and persisted to failure table. Offset={}",
               record.offset());
 };
+
+DefaultErrorHandler errorHandler = new DefaultErrorHandler(dltAndPersist, fixedBackOff);
 ```
 
 **When to use:** Production systems where you need both Kafka-based replay capability and operational dashboards showing failure counts and details.
 
 **Common pitfall**
-- If the database write in `persistToFailureTable` fails (e.g., the DB is down), the recovery itself throws an exception. Wrap the persistence call in a try/catch so that a DB failure during recovery does not prevent the offset from advancing and block the partition.
+- If the database write fails (e.g., the DB is down), the recovery itself throws an exception. Wrap the persistence call in a try/catch so that a DB failure during recovery does not prevent the offset from advancing and block the partition.
+
+#### Wiring It Together with a Mode-Driven Recoverer
+
+Once you've understood each strategy individually, a clean way to make the recovery behavior configurable is a mode-driven `ConsumerRecordRecoverer` bean that selects the right path at startup time based on a property:
+
+```yaml
+app:
+  kafka:
+    recovery:
+      mode: failure-table   # options: failure-table | dlt | both
+```
+
+```java
+@Bean
+public ConsumerRecordRecoverer consumerRecordRecoverer(
+        DeadLetterPublishingRecoverer deadLetterPublishingRecoverer) {
+
+    RecoveryMode mode = RecoveryMode.from(recoveryMode);
+
+    return (record, exception) -> {
+        switch (mode) {
+            case DLT ->
+                deadLetterPublishingRecoverer.accept(record, exception);
+            case FAILURE_TABLE ->
+                failureRecordService.saveFailureRecord(record, exception);
+            case BOTH -> {
+                failureRecordService.saveFailureRecord(record, exception);
+                deadLetterPublishingRecoverer.accept(record, exception);
+            }
+        }
+    };
+}
+```
+
+Each `case` corresponds directly to one of the three strategies above. Switching between them requires only a property change — no code change.
 
 **Why it matters**
-- The recovery strategy is the last line of defense. Choosing the right one determines whether failed messages disappear silently, accumulate in a DLT for replay, or are visible in your operational database.
+- The recovery strategy is the last line of defense. Choosing the right one determines whether failed messages disappear silently, accumulate in a DLT for replay, or are visible in your operational database. The mode-driven approach lets you start simple and add strategies without restructuring the error handler wiring.
 
 ---
 
@@ -965,7 +975,7 @@ When the listener throws an exception, `DefaultErrorHandler` intercepts it. The 
 
 ### 10) Full Configuration: LibraryEventsConsumerConfig.java
 
-The complete updated `LibraryEventsConsumerConfig` with retry, DLT, and non-retryable exception classification:
+The complete `LibraryEventsConsumerConfig` wires together all the pieces covered in Parts 1–3: a dedicated DLT producer, the mode-driven recoverer, retry/backoff, non-retryable exception classification, and a full `RetryListener`.
 
 ```java
 @Configuration
@@ -975,73 +985,175 @@ public class LibraryEventsConsumerConfig {
     private static final Logger log =
             LoggerFactory.getLogger(LibraryEventsConsumerConfig.class);
 
-    // ── Dead Letter Publishing Recoverer ────────────────────────────────────
-    // Publishes failed records to library-events.DLT after all retries are exhausted
+    private final FailureRecordService failureRecordService;
+    private final String recoveryMode;
+    private final String bootstrapServers;
+
+    public LibraryEventsConsumerConfig(
+            FailureRecordService failureRecordService,
+            @Value("${app.kafka.recovery.mode:failure-table}") String recoveryMode,
+            @Value("${spring.kafka.consumer.bootstrap-servers:localhost:9092}") String bootstrapServers) {
+        this.failureRecordService = failureRecordService;
+        this.recoveryMode = recoveryMode;
+        this.bootstrapServers = bootstrapServers;
+    }
+
+    // ── DLT Producer ─────────────────────────────────────────────────────────
+    // A dedicated producer factory and KafkaTemplate for publishing to the DLT.
+    // Uses Object as the value type so it can carry any failed record payload.
 
     @Bean
-    public DeadLetterPublishingRecoverer recoverer(
-            KafkaTemplate<Integer, LibraryEventDto> kafkaTemplate) {
+    public ProducerFactory<Integer, Object> dltProducerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        return new DefaultKafkaProducerFactory<>(props);
+    }
 
+    @Bean
+    public KafkaTemplate<Integer, Object> dltKafkaTemplate(
+            ProducerFactory<Integer, Object> dltProducerFactory) {
+        return new KafkaTemplate<>(dltProducerFactory);
+    }
+
+    // ── Dead Letter Publishing Recoverer ─────────────────────────────────────
+    // Routes failed records to <original-topic>.DLT on the same partition.
+    // Adds exception metadata headers automatically.
+
+    @Bean
+    public DeadLetterPublishingRecoverer deadLetterPublishingRecoverer(
+            KafkaTemplate<Integer, Object> dltKafkaTemplate) {
         return new DeadLetterPublishingRecoverer(
-                kafkaTemplate,
-                (record, ex) -> {
-                    log.error("Recovery: publishing failed record to DLT. "
-                            + "Topic={}, Partition={}, Offset={}, Exception={}",
-                            record.topic(), record.partition(),
-                            record.offset(), ex.getMessage());
-
-                    return new TopicPartition(record.topic() + ".DLT", record.partition());
-                }
+                dltKafkaTemplate,
+                (record, ex) -> new TopicPartition(record.topic() + ".DLT", record.partition())
         );
     }
 
-    // ── Default Error Handler ────────────────────────────────────────────────
-    // Retry up to 3 times with 1-second fixed backoff
-    // Non-retryable exceptions bypass retries and go straight to DLT
+    // ── Mode-Driven Recoverer ─────────────────────────────────────────────────
+    // Selects the recovery path at startup based on app.kafka.recovery.mode.
+    // Delegates to the appropriate strategy: persist, DLT, or both.
 
     @Bean
-    public DefaultErrorHandler errorHandler(DeadLetterPublishingRecoverer recoverer) {
+    public ConsumerRecordRecoverer consumerRecordRecoverer(
+            DeadLetterPublishingRecoverer deadLetterPublishingRecoverer) {
 
-        // Retry 3 times, wait 1 second between each attempt
-        FixedBackOff fixedBackOff = new FixedBackOff(1_000L, 3L);
+        RecoveryMode mode = RecoveryMode.from(recoveryMode);
+        log.info("Kafka recovery mode: {}", mode);
 
-        DefaultErrorHandler errorHandler =
-                new DefaultErrorHandler(recoverer, fixedBackOff);
+        return (record, exception) -> {
+            switch (mode) {
+                case DLT ->
+                    publishToDlt(record, exception, deadLetterPublishingRecoverer);
+                case FAILURE_TABLE ->
+                    persistFailureRecord(record, exception);
+                case BOTH -> {
+                    persistFailureRecord(record, exception);
+                    publishToDlt(record, exception, deadLetterPublishingRecoverer);
+                }
+            }
+        };
+    }
 
-        // These exceptions skip retries entirely — send straight to DLT
+    // ── Default Error Handler ─────────────────────────────────────────────────
+    // Retry 3 times with 1-second fixed backoff.
+    // Non-retryable exceptions skip retries and go straight to the recoverer.
+    // RetryListener covers the full delivery lifecycle: attempt, recovered, recoveryFailed.
+
+    @Bean
+    public DefaultErrorHandler errorHandler(ConsumerRecordRecoverer consumerRecordRecoverer) {
+
+        var fixedBackOff = new FixedBackOff(1_000L, 3L);
+
+        var errorHandler = new DefaultErrorHandler(consumerRecordRecoverer, fixedBackOff);
+
         errorHandler.addNotRetryableExceptions(
-                IllegalArgumentException.class,         // bad payload
-                NullPointerException.class,             // programming error
+                DeserializationException.class,         // malformed JSON / type mismatch
+                IllegalArgumentException.class,         // bad payload — will never succeed
                 DataIntegrityViolationException.class   // duplicate key — always fails
         );
 
-        // Log each retry attempt for observability
-        errorHandler.setRetryListeners((record, ex, deliveryAttempt) ->
-                log.warn("Retry attempt {} for record. Topic={}, Partition={}, Offset={}, Error={}",
+        errorHandler.setRetryListeners(new RetryListener() {
+
+            @Override
+            public void failedDelivery(ConsumerRecord<?, ?> record, Exception ex, int deliveryAttempt) {
+                log.warn("Delivery attempt {} failed. Topic={}, Partition={}, Offset={}, Error={}",
                         deliveryAttempt,
                         record.topic(), record.partition(), record.offset(),
-                        ex.getMessage())
-        );
+                        ex.getMessage());
+            }
+
+            @Override
+            public void recovered(ConsumerRecord<?, ?> record, Exception ex) {
+                log.info("Record recovered after retries. Topic={}, Partition={}, Offset={}",
+                        record.topic(), record.partition(), record.offset());
+            }
+
+            @Override
+            public void recoveryFailed(ConsumerRecord<?, ?> record, Exception original, Exception failure) {
+                log.error("Record recovery failed. Topic={}, Partition={}, Offset={}, OriginalError={}, RecoveryError={}",
+                        record.topic(), record.partition(), record.offset(),
+                        original.getMessage(), failure.getMessage());
+            }
+        });
 
         return errorHandler;
     }
 
-    // ── Container Factory ────────────────────────────────────────────────────
+    // ── Container Factory ─────────────────────────────────────────────────────
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto>
+    KafkaListenerContainerFactory<ConcurrentMessageListenerContainer<Integer, LibraryEventDto>>
             kafkaListenerContainerFactory(
                 ConsumerFactory<Integer, LibraryEventDto> consumerFactory,
                 DefaultErrorHandler errorHandler) {
 
-        ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
-
+        var factory = new ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto>();
         factory.setConsumerFactory(consumerFactory);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
         factory.setCommonErrorHandler(errorHandler);
 
         return factory;
+    }
+
+    // ── Private Helpers ───────────────────────────────────────────────────────
+
+    private void persistFailureRecord(ConsumerRecord<?, ?> record, Exception exception) {
+        log.error("All retries exhausted. Persisting failed record to failure_record table. "
+                        + "Topic={}, Partition={}, Offset={}, Exception={}",
+                record.topic(), record.partition(), record.offset(), exception.getMessage());
+
+        //noinspection unchecked
+        failureRecordService.saveFailureRecord(
+                (ConsumerRecord<Integer, LibraryEventDto>) record, exception);
+    }
+
+    private void publishToDlt(
+            ConsumerRecord<?, ?> record,
+            Exception exception,
+            DeadLetterPublishingRecoverer deadLetterPublishingRecoverer) {
+        log.error("All retries exhausted. Publishing failed record to DLT. "
+                        + "Topic={}, Partition={}, Offset={}, Exception={}",
+                record.topic(), record.partition(), record.offset(), exception.getMessage());
+        deadLetterPublishingRecoverer.accept(record, exception);
+    }
+
+    // ── Recovery Mode Enum ────────────────────────────────────────────────────
+
+    private enum RecoveryMode {
+        FAILURE_TABLE, DLT, BOTH;
+
+        private static RecoveryMode from(String value) {
+            String normalized = value == null ? "" : value.trim().toUpperCase().replace('-', '_');
+            return switch (normalized) {
+                case "FAILURE_TABLE" -> FAILURE_TABLE;
+                case "DLT"           -> DLT;
+                case "BOTH"          -> BOTH;
+                default -> throw new IllegalArgumentException(
+                        "Invalid app.kafka.recovery.mode: " + value
+                        + " (expected: failure-table, dlt, both)");
+            };
+        }
     }
 }
 ```
@@ -1050,11 +1162,14 @@ public class LibraryEventsConsumerConfig {
 
 | Component | Without it | With it |
 |---|---|---|
-| `DefaultErrorHandler` | Exceptions swallowed silently by container — message lost | Retry + recovery orchestrated automatically |
-| `FixedBackOff(1000, 3)` | No retry — first failure is final | 3 retry attempts with 1s breathing room |
-| `addNotRetryableExceptions` | Duplicate keys retried 3 times before DLT | Permanent failures go to DLT immediately |
-| `DeadLetterPublishingRecoverer` | Failed messages disappear — no audit trail | Failed records land in DLT with full exception context |
-| `RetryListener` | No visibility into retry attempts | Each retry logged — observable in production |
+| `dltProducerFactory` + `dltKafkaTemplate` | Consumer's serializer config used for DLT — type mismatch on Object payloads | Dedicated producer with `JsonSerializer` for Object; no type conflict |
+| `DeadLetterPublishingRecoverer` | Failed messages disappear — no audit trail | Failed records land in `<topic>.DLT` with full exception headers |
+| `ConsumerRecordRecoverer` (mode-driven) | Single hard-coded recovery path | Recovery path configurable via `app.kafka.recovery.mode` — no code change needed |
+| `RecoveryMode` enum | String comparison scattered in switch — typo-prone | Normalized at startup; invalid config fails fast with a clear message |
+| `DefaultErrorHandler` | Exceptions swallowed silently — message lost | Retry + recovery orchestrated automatically |
+| `FixedBackOff(1000, 3)` | No retry — first failure is final | 3 retry attempts with 1s breathing room for transient failures |
+| `addNotRetryableExceptions` | Permanent failures waste 3 retry cycles before recovery | `DeserializationException`, `IllegalArgumentException`, `DataIntegrityViolationException` go straight to recovery |
+| `RetryListener` (full interface) | Retries happen silently | Every attempt, recovery, and recovery failure is logged — observable in production |
 
 ---
 

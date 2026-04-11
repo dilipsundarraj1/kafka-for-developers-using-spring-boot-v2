@@ -975,28 +975,163 @@ Now that you understand single containers, the next step is running **multiple c
 
 ### Docker Compose
 
-Run an entire stack (app + Kafka + Zookeeper) with a single command:
+Docker Compose lets you define and run an entire multi-container stack in a single file. Instead of starting each container manually with `docker run`, you declare all services in one YAML file and bring them all up with one command.
+
+This project's full stack — 3 Kafka brokers + the Library Events Producer — is defined in:
+
+**[`docker-compose-multi-broker-apps.yml`](../../../../docker-compose-multi-broker-apps.yml)**
 
 ```yaml
-# docker-compose.yml
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
-
-  kafka:
+  kafka1:
     image: confluentinc/cp-kafka:7.4.0
-    depends_on:
-      - zookeeper
+    hostname: kafka1
+    container_name: kafka1
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:19092,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9092,DOCKER://host.docker.internal:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://kafka1:9093,INTERNAL://kafka1:19092,EXTERNAL://0.0.0.0:9092,DOCKER://0.0.0.0:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
 
-  library-producer:
-    image: library-events-producer:1.0
+  kafka2:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka2
+    container_name: kafka2
+    ports:
+      - "9094:9094"
+      - "29094:29094"
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:19094,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9094,DOCKER://host.docker.internal:29094
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://kafka2:9093,INTERNAL://kafka2:19094,EXTERNAL://0.0.0.0:9094,DOCKER://0.0.0.0:29094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka3
+    container_name: kafka3
+    ports:
+      - "9096:9096"
+      - "29096:29096"
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:19096,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9096,DOCKER://host.docker.internal:29096
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://kafka3:9093,INTERNAL://kafka3:19096,EXTERNAL://0.0.0.0:9096,DOCKER://0.0.0.0:29096
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
+  library-events-producer:
+    image: dilipthelip/library-events-producer:v1
+    container_name: library-events-producer
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka1:19092,kafka2:19094,kafka3:19096
     depends_on:
-      - kafka
+      - kafka1
+      - kafka2
+      - kafka3
 ```
 
+### How this file works
+
+The `kafka1`, `kafka2`, and `kafka3` services are a 3-broker Kafka cluster running in KRaft mode (no ZooKeeper). The broker configuration is the same as `docker-compose-multi-broker.yml` — refer to that file for a full breakdown of the Kafka settings.
+
+The key addition here is the `library-events-producer` service, which runs the Spring Boot app alongside the brokers in the same Docker network.
+
+#### The producer service
+
+```yaml
+library-events-producer:
+  image: dilipthelip/library-events-producer:v1
+  ports:
+    - "8080:8080"
+  environment:
+    SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka1:19092,kafka2:19094,kafka3:19096
+  depends_on:
+    - kafka1
+    - kafka2
+    - kafka3
+```
+
+- **`image`**: pulls the pre-built producer image from Docker Hub — no local build needed.
+- **`SPRING_KAFKA_BOOTSTRAP_SERVERS`**: overrides the bootstrap servers at runtime using Spring Boot's environment variable binding. Because the producer container is inside the **same Docker network** as the brokers, it uses the `INTERNAL` listener addresses (`kafka1:19092`, etc.) — not `localhost` or `host.docker.internal`.
+- **`depends_on`**: Docker Compose starts the three Kafka containers before starting the producer. Note: this only waits for the containers to start, not for Kafka to be fully ready. The producer's built-in retry logic handles the brief window before the cluster is fully elected.
+- **Port `8080`**: exposes the Spring Boot app so you can reach the Swagger UI at `http://localhost:8080/swagger-ui.html` from your Mac.
+
+#### How the Docker network connects everything
+
+Docker Compose automatically creates a shared network for all services in the file. Every container can reach every other container **by its service name** as a hostname.
+
+```
+Inside the Docker network:
+  library-events-producer  →  kafka1:19092  ✓  (INTERNAL listener)
+  library-events-producer  →  kafka2:19094  ✓  (INTERNAL listener)
+  library-events-producer  →  kafka3:19096  ✓  (INTERNAL listener)
+
+From your Mac:
+  curl http://localhost:8080  →  library-events-producer container  ✓
+  kafka-topics.sh --bootstrap-server localhost:9092  →  kafka1  ✓
+```
+
+#### Starting and stopping the stack
+
 ```bash
-docker compose up -d    # Start everything
-docker compose down     # Stop everything
+# Start all services in the background
+docker compose -f docker-compose-multi-broker-apps.yml up -d
+
+# Check all containers are running
+docker compose -f docker-compose-multi-broker-apps.yml ps
+
+# Follow logs for all services
+docker compose -f docker-compose-multi-broker-apps.yml logs -f
+
+# Follow logs for just the producer
+docker compose -f docker-compose-multi-broker-apps.yml logs -f library-events-producer
+
+# Stop and remove all containers
+docker compose -f docker-compose-multi-broker-apps.yml down
+```
+
+Once running, open the Swagger UI to send events to the producer:
+
+```
+http://localhost:8080/swagger-ui.html
 ```
 
 ### Beyond Docker Compose
@@ -1006,6 +1141,5 @@ docker compose down     # Stop everything
 | **Docker Compose** | Multi-container apps on a single machine |
 | **Docker Networks** | Control how containers communicate |
 | **Docker Volumes** | Persist data across container restarts |
-| **Kubernetes** | Orchestrate containers across many machines at scale |
 
 In this course, we'll use **Docker Compose** to run our full Kafka + Spring Boot stack locally with a single command.
