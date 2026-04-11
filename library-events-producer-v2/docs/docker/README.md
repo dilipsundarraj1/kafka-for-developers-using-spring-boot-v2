@@ -4,6 +4,7 @@
 * [Docker Guide](#docker-guide)
   * [Why this approach is useful](#why-this-approach-is-useful)
   * [Prerequisites](#prerequisites)
+  * [Prompt to generate the Dockerfile](#prompt-to-generate-the-dockerfile)
   * [1) Build the app JAR](#1-build-the-app-jar)
   * [2) Build the Docker image](#2-build-the-docker-image)
   * [3) Run the container](#3-run-the-container)
@@ -35,6 +36,40 @@ This guide uses the current `Dockerfile` approach:
 
 - Docker running locally
 - Java and Gradle wrapper available (`./gradlew`)
+
+## Prompt to generate the Dockerfile
+
+Use this prompt if you want an AI assistant to generate the same kind of `Dockerfile` used in this project:
+
+```text
+Generate a Dockerfile for my Spring Boot application with these requirements:
+
+- Do not build the app inside Docker.
+- I will run `./gradlew clean build` outside Docker first.
+- The Dockerfile should copy the generated Spring Boot jar from `build/libs/` into the image.
+- Use a runtime-only base image: `eclipse-temurin:25-jre`.
+- Set the working directory to `/app`.
+- Copy the executable jar to `/app/app.jar`.
+- Expose port `8080`.
+- Start the app with: `java -jar /app/app.jar`.
+- Use an `ARG JAR_FILE=build/libs/*-SNAPSHOT.jar` so the jar path can be overridden if needed.
+- Keep the Dockerfile simple and production-friendly.
+
+Return only the Dockerfile content.
+```
+
+Expected result:
+
+```dockerfile
+FROM eclipse-temurin:25-jre
+WORKDIR /app
+
+ARG JAR_FILE=build/libs/*-SNAPSHOT.jar
+COPY ${JAR_FILE} /app/app.jar
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+```
 
 ## 1) Build the app JAR
 
