@@ -557,14 +557,14 @@ GitHub Copilot can analyze your existing code and capture your patterns into a `
 
 ### Step-by-Step (SKILL.md)
 
-1. Open **GitHub Copilot Chat** in VS Code
-2. Use the `@workspace` agent so Copilot can access your codebase
-3. Identify an existing file or folder that contains the pattern you want to capture
+1. Open **GitHub Copilot Chat** in IntelliJ IDEA (View → Tool Windows → GitHub Copilot)
+2. Identify an existing file or folder that contains the pattern you want to capture
+3. Reference specific files in your prompt using the file picker or by mentioning the path — Copilot Chat will use your open project as context
 4. Use a prompt like this — tailored to the task you want to encode:
 
 **For testing skills:**
 ```
-@workspace Look at all the integration tests in
+Look at all the integration tests in
 src/test/java/com/learnkafka/ and generate a SKILL.md file
 that captures our exact testing patterns.
 
@@ -585,7 +585,7 @@ Include:
 
 **For database migration skills:**
 ```
-@workspace Look at src/main/resources/db/migration/ and generate
+Look at src/main/resources/db/migration/ and generate
 a SKILL.md for creating new Flyway migrations in this project.
 
 Include:
