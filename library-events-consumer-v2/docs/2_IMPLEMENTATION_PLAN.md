@@ -222,13 +222,57 @@ Add full business logic: `ADD`/`UPDATE` branching, conditional validation, excep
 - `LibraryEventsConsumerConfig` (error handler + retry + DLT)
 - New Flyway migrations (if schema changes are needed for business logic)
 
-#### Tasks — Schema Changes (if needed)
+#### Tasks — Flyway Migration (if schema changes are needed)
 1. If new columns or tables are required (e.g., a `status` column, a `failed_event` table for custom recovery):
-   - Create a new migration file: `src/main/resources/db/migration/V{N}__{description}.sql`.
    - Check existing migrations to determine the next version number (currently `V2` is the latest).
+   - Create a new migration file: `src/main/resources/db/migration/V{N}__{description}.sql`.
    - **Never edit** `V1__init_schema.sql` or `V2__add_audit_columns.sql` — they are already applied.
-   - Update JPA entities to match the new schema (add fields, getters, setters, `@Column` annotations).
-   - Verify Flyway applies the migration on startup before testing.
+   - Verify Flyway applies the migration cleanly on startup before proceeding.
+
+#### Tasks — Entity Updates (after migration is applied)
+
+Three migrations define the full schema. Map each table to its JPA entity as follows.
+
+**`V1__init_schema.sql` → `LibraryEvent` + `Book`**
+
+`library_event` table:
+| SQL Column | SQL Type | Java Field | Java Type | Annotation |
+|---|---|---|---|---|
+| `library_event_id` | `SERIAL` PK | `libraryEventId` | `Integer` | `@Id @GeneratedValue(strategy = IDENTITY)` |
+| `event_type` | `VARCHAR(255) NOT NULL` | `eventType` | `LibraryEventType` | `@Enumerated(EnumType.STRING) @NotNull` |
+
+`book` table:
+| SQL Column | SQL Type | Java Field | Java Type | Annotation |
+|---|---|---|---|---|
+| `book_id` | `INTEGER` PK | `bookId` | `Integer` | `@Id` (client-assigned — no `@GeneratedValue`) |
+| `book_name` | `VARCHAR(255) NOT NULL` | `bookName` | `String` | `@NotBlank` |
+| `book_author` | `VARCHAR(255) NOT NULL` | `bookAuthor` | `String` | `@NotBlank` |
+| `library_event_id` | `INTEGER` FK | `libraryEvent` | `LibraryEvent` | `@OneToOne @JoinColumn(name = "library_event_id")` |
+
+Wire the bidirectional relationship: `LibraryEvent.book` gets `@OneToOne(mappedBy = "libraryEvent", cascade = ALL)`.
+
+**`V2__add_audit_columns.sql` → `LibraryEvent` + `Book` (both entities)**
+
+Both tables get the same two columns — add to both entities:
+| SQL Column | SQL Type | Java Field | Java Type | Annotation |
+|---|---|---|---|---|
+| `created_at` | `TIMESTAMP NOT NULL` | `createdAt` | `LocalDateTime` | `@Column(nullable = false, updatable = false)` |
+| `updated_at` | `TIMESTAMP NOT NULL` | `updatedAt` | `LocalDateTime` | `@Column(nullable = false)` |
+
+Set values via lifecycle callbacks — do not assign in the constructor:
+```java
+@PrePersist
+protected void onCreate() {
+    createdAt = LocalDateTime.now();
+    updatedAt = LocalDateTime.now();
+}
+
+@PreUpdate
+protected void onUpdate() {
+    updatedAt = LocalDateTime.now();
+}
+```
+
 
 #### Tasks — Business Logic
 2. Implement event-type branching in `LibraryEventService.processEvent()`:
@@ -246,17 +290,6 @@ Add full business logic: `ADD`/`UPDATE` branching, conditional validation, excep
    - **Non-retryable:** `IllegalArgumentException`, `JsonProcessingException` (bad data, will never succeed).
    - **Retryable:** all others (transient DB errors, network issues).
 
-#### Tasks — Error Handling & Retry
-8. Update `LibraryEventsConsumerConfig`:
-   - Configure `DefaultErrorHandler` with `FixedBackOff` or `ExponentialBackOff` (3 attempts, `1s`/`2s`/`4s`).
-   - Register non-retryable exception classes.
-   - Configure `DeadLetterPublishingRecoverer` for DLT routing to `library-events.DLT`.
-   - Ensure offset commits only after success or DLT handoff.
-9. Ensure `@Transactional` boundaries prevent partial writes on failure.
-10. *(Optional)* If persisting failed events to a `failed_event` table for custom recovery:
-    - Create `V3__create_failed_event_table.sql` with columns: `id`, `topic`, `partition`, `offset_val`, `key`, `value`, `error_message`, `status`, `created_at`.
-    - Create `FailedEvent` entity + `FailedEventRepository`.
-    - Implement `ConsumerRecordRecoverer` that persists to this table.
 
 #### Deliverables
 - Full `ADD` + `UPDATE` service implementation.
