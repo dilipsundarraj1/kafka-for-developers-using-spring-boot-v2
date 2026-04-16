@@ -72,7 +72,7 @@ flowchart LR
     - [Step 6: Tasks - Business Logic](#step-6-tasks---business-logic)
         - [Tasks — PostgreSQL Setup](#tasks--postgresql-setup)
         - [Tasks — Flyway Migration](#tasks--flyway-migration)
-        - [Tasks — Entity Updates](#tasks--entity-updates-after-migration-is-applied)
+        - [Tasks — Entities and Repositories](#tasks--entities-and-repositories)
         - [Tasks — Business Logic](#tasks--business-logic)
         - [Tasks — Validation](#tasks--validation)
     - [Step 7: Integration Test to Ensure Save is Working](#step-7-integration-test-to-ensure-save-is-working)
@@ -371,7 +371,9 @@ ALTER TABLE book
 
 Place both files in `src/main/resources/db/migration/` and verify Flyway applies them cleanly on startup before proceeding to entity mapping.
 
-#### Tasks — Entity Updates (after migration is applied)
+#### Tasks — Entities and Repositories
+
+##### Task A — JPA Entities (map migration schema to Java)
 
 Three migrations define the full schema. Map each table to its JPA entity as follows.
 
@@ -414,6 +416,41 @@ protected void onUpdate() {
     updatedAt = LocalDateTime.now();
 }
 ```
+
+##### Task B — Spring Data JPA Repositories
+
+Create one repository interface per aggregate root. `Book` is owned by `LibraryEvent` (cascade ALL), so it does not need its own repository — all persistence goes through `LibraryEventRepository`.
+
+**`LibraryEventRepository`**
+
+```java
+package com.learnkafka.repository;
+
+import com.learnkafka.entity.LibraryEvent;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface LibraryEventRepository extends JpaRepository<LibraryEvent, Integer> {
+}
+```
+
+- Key type is `Integer` — matches `library_event_id SERIAL` PK.
+- Provides `save()`, `findById()`, `findAll()`, `deleteById()` out of the box.
+- No custom queries needed at this stage; add `@Query` methods only when a use-case requires them.
+
+**`BookRepository`**
+
+```java
+package com.learnkafka.repository;
+
+import com.learnkafka.entity.Book;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface BookRepository extends JpaRepository<Book, Integer> {
+}
+```
+
+- Key type is `Integer` — matches `book_id INTEGER` PK.
+- Useful for direct book lookups (e.g., verifying a book exists by ID during `UPDATE` processing) without loading the parent `LibraryEvent`.
 
 
 #### Tasks — Business Logic
