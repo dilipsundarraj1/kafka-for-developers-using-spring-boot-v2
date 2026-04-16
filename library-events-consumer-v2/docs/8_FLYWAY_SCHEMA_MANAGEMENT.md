@@ -2,7 +2,9 @@
 
 ## What Is Flyway?
 
-Flyway is a **version-controlled database migration tool**. Instead of letting an ORM guess what the schema should look like, you write explicit SQL scripts — one per change — and Flyway applies them **in order**, exactly once, tracking progress in a `flyway_schema_history` table.
+Flyway is a **version-controlled database migration tool**. You write explicit SQL
+scripts — one per change — and Flyway applies them **in order**, exactly once, tracking
+progress in a `flyway_schema_history` table.
 
 ```
 V1__init_schema.sql          ← creates tables
@@ -10,49 +12,21 @@ V2__add_audit_columns.sql    ← alters tables to add columns
 V3__add_index_on_book.sql    ← future migration
 ```
 
-On every application startup Flyway checks which migrations have already been applied and runs only the new ones.
+On every application startup Flyway checks which migrations have already been applied
+and runs only the new ones.
 
 ---
 
-## The JPA `ddl-auto` Approach (and Why It Falls Short)
+## Why Flyway
 
-Hibernate provides a `spring.jpa.hibernate.ddl-auto` property with several modes:
-
-| Mode          | Behaviour                                                                 |
-|---------------|---------------------------------------------------------------------------|
-| `create`      | Drops all tables and recreates them on every startup. **Data is lost.**   |
-| `create-drop` | Same as `create`, but also drops tables when the app shuts down.          |
-| `update`      | Compares entities to the DB and adds missing columns/tables. Never drops. |
-| `validate`    | Only checks that the schema matches the entities. No changes.             |
-| `none`        | Does nothing — schema is managed externally (e.g. Flyway).               |
-
-### Problems with `update` in Production
-
-`ddl-auto: update` is the most commonly used mode during early development, but it has serious limitations:
-
-1. **No column drops or renames** — If you rename a field in your entity, Hibernate adds a *new* column and leaves the old one behind. The stale column stays forever.
-2. **No constraint changes** — Changing a column from nullable to `NOT NULL`, altering its type, or adding a check constraint is silently ignored.
-3. **No data migrations** — Adding a column with a default backfill, splitting a table, or transforming existing rows is impossible through `ddl-auto`.
-4. **No rollback path** — There is no record of what changed and no way to undo it.
-5. **Non-deterministic across environments** — The diff Hibernate computes depends on the *current* state of the target database, so dev, staging, and production can drift apart silently.
-6. **Dangerous on shared databases** — Two microservices pointing at the same DB with `update` can produce conflicting schema changes with no coordination.
-
-> **Bottom line:** `ddl-auto: update` is convenient for prototyping but is **not safe for production**.
-
----
-
-## Why Flyway Is Better
-
-| Concern                | `ddl-auto: update`                          | Flyway                                           |
-|------------------------|---------------------------------------------|--------------------------------------------------|
-| **Schema versioning**  | None — diffs are computed at runtime        | Explicit, numbered migration files in Git         |
-| **Reproducibility**    | Depends on current DB state                 | Same migrations always produce the same schema    |
-| **Destructive changes**| Cannot drop/rename columns                  | Full SQL — `ALTER`, `DROP`, `RENAME`, anything    |
-| **Data migrations**    | Not supported                               | Write `UPDATE`/`INSERT` SQL in a migration        |
-| **Audit trail**        | None                                        | `flyway_schema_history` table records every run   |
-| **Team collaboration** | Merge conflicts invisible until runtime     | Migration files conflict visibly in Git           |
-| **Rollback**           | Not possible                                | Write a compensating migration (or use Flyway Teams `undo`) |
-| **CI/CD safety**       | Risky — silent drift                        | Fails fast if checksums mismatch or order is wrong|
+| Benefit | What it means |
+|---------|---------------|
+| **Full SQL control** | Plain SQL — `CREATE`, `ALTER`, `DROP`, `RENAME`, data backfills. Nothing is inferred. |
+| **Versioned and tracked** | Numbered files in Git + `flyway_schema_history` table. Always know what was applied and when. |
+| **Consistent across environments** | Same migrations always produce the same schema in dev, staging, and production. |
+| **Data + schema in one migration** | Backfills and transforms live in the same file as the `ALTER TABLE`, keeping changes atomic. |
+| **Fails fast on tampering** | Checksums every applied file — changed file means the app refuses to start. |
+| **Team-safe** | Version conflicts surface as Git merge conflicts, not runtime surprises. |
 
 ---
 
@@ -73,7 +47,6 @@ implementation 'org.springframework.boot:spring-boot-starter-flyway'
 ### Application Configuration
 
 ```yaml
-# application.yml
 spring:
   flyway:
     enabled: true
@@ -81,31 +54,28 @@ spring:
     baseline-on-migrate: true
   jpa:
     hibernate:
-      ddl-auto: none          # Flyway owns the schema — Hibernate must not touch it
+      ddl-auto: none   # Flyway owns the schema — Hibernate must not touch it
 ```
 
-| Property               | Purpose                                                                 |
-|------------------------|-------------------------------------------------------------------------|
-| `enabled: true`        | Flyway runs on startup (default in Spring Boot when the starter is present). |
-| `locations`            | Where migration SQL files live.                                          |
-| `baseline-on-migrate`  | If the DB already has tables but no `flyway_schema_history`, Flyway creates a baseline instead of failing. Useful when adopting Flyway on an existing database. |
-| `ddl-auto: none`       | **Critical** — prevents Hibernate from generating DDL. Flyway is the single source of truth. |
+| Property              | Purpose |
+|-----------------------|---------|
+| `enabled: true`       | Flyway runs on startup (default when the starter is present). |
+| `locations`           | Where migration SQL files live. |
+| `baseline-on-migrate` | If the DB already has tables but no `flyway_schema_history`, Flyway creates a baseline instead of failing. Useful when adopting Flyway on an existing database. |
+| `ddl-auto: none`      | Prevents Hibernate from generating DDL. Flyway is the single source of truth for schema changes. |
 
 ### Test Configuration
 
 ```yaml
-# test application.yml
 spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    clean-disabled: false       # allows Flyway clean in tests (blocked in production by default)
+    clean-disabled: false     # allows Flyway.clean() in tests — never set in production
   jpa:
     hibernate:
       ddl-auto: none
 ```
-
-`clean-disabled: false` permits `Flyway.clean()` in test contexts (e.g., Testcontainers), where you may want to reset the schema between runs. **Never set this in production.**
 
 ### Migration Files
 
@@ -155,7 +125,8 @@ ALTER TABLE book
     ADD COLUMN updated_at  TIMESTAMP NOT NULL DEFAULT now();
 ```
 
-Adds `created_at` and `updated_at` to both tables. The `DEFAULT now()` ensures existing rows (if any) get a sensible value — something `ddl-auto: update` cannot do.
+Adds `created_at` and `updated_at` to both tables. The `DEFAULT now()` ensures existing
+rows get a sensible value at the time of migration.
 
 ---
 
@@ -169,17 +140,15 @@ Application starts
         → Runs V1__init_schema.sql        (if not yet applied)
         → Runs V2__add_audit_columns.sql  (if not yet applied)
     → Flyway finishes
-  → JPA/Hibernate starts with ddl-auto: none (validates only if configured, otherwise does nothing)
+  → JPA/Hibernate starts with ddl-auto: none
   → Application is ready
 ```
 
-**Key point:** Flyway runs *before* Hibernate. By the time JPA boots, the schema is already up to date.
+Flyway runs *before* Hibernate. By the time JPA boots, the schema is already up to date.
 
 ---
 
 ## Adding a New Migration
-
-When you need a schema change:
 
 1. **Create a new file** in `src/main/resources/db/migration/`:
    ```
@@ -192,7 +161,9 @@ When you need a schema change:
 3. **Update the JPA entity** to match (add the `isbn` field to `Book.java`).
 4. **Commit both** the migration file and the entity change together — they are a pair.
 
-> **Rule:** Never edit or delete an already-applied migration. Flyway checksums each file; if the checksum changes, the application refuses to start. Always create a *new* migration for corrections.
+> **Rule:** Never edit or delete an already-applied migration. Flyway checksums each
+> file; if the checksum changes, the application refuses to start. Always create a
+> new migration for corrections.
 
 ---
 
@@ -201,7 +172,6 @@ When you need a schema change:
 | Pitfall | Why It Happens | How to Avoid |
 |---------|---------------|--------------|
 | Editing an applied migration | Flyway detects checksum mismatch and fails on startup | Always add a new `V<n+1>__fix.sql` instead |
-| Using `ddl-auto: update` alongside Flyway | Hibernate and Flyway both try to manage the schema, causing conflicts | Set `ddl-auto: none` — let Flyway be the single owner |
 | Forgetting the double underscore | `V3_description.sql` is not recognized by Flyway | Always use `V3__description.sql` (two underscores) |
 | Non-sequential version numbers with gaps | Not a problem — Flyway only cares about ordering, not contiguity | Gaps like V1, V2, V5 are fine |
 | Running `Flyway.clean()` in production | Drops **all** objects in the schema | Keep `clean-disabled: true` (default) in production |
@@ -218,4 +188,3 @@ When you need a schema change:
 | Naming convention | `V<number>__<description>.sql` |
 | Applied migration files | **Never edit or delete** — create a new migration instead |
 | Test environments | Use Testcontainers + Flyway; optionally enable `clean-disabled: false` |
-

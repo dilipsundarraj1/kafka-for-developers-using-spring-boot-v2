@@ -70,6 +70,7 @@ flowchart LR
     - [Step 4: StringDeserializer vs JsonDeserializer](#step-4-stringdeserializer-vs-jsondeserializer)
     - [Step 5: Consumer Groups and Consumer Offset Management](#step-5-consumer-groups-and-consumer-offset-management)
     - [Step 6: Tasks - Business Logic](#step-6-tasks---business-logic)
+        - [Tasks — PostgreSQL Setup](#tasks--postgresql-setup)
         - [Tasks — Flyway Migration](#tasks--flyway-migration)
         - [Tasks — Entity Updates](#tasks--entity-updates-after-migration-is-applied)
         - [Tasks — Business Logic](#tasks--business-logic)
@@ -285,7 +286,39 @@ Add full business logic: `ADD`/`UPDATE` branching, conditional validation, excep
 - `LibraryEventsConsumerConfig` (error handler + retry + DLT)
 - New Flyway migrations (if schema changes are needed for business logic)
 
+#### Tasks — PostgreSQL Setup
+
+**Step 1 — Start PostgreSQL using Docker Compose**
+
+Bring up the PostgreSQL container defined in the project's `compose.yml` (or `docker-compose.yml`):
+
+```bash
+docker compose up -d postgres
+```
+
+Verify the container is healthy:
+
+```bash
+docker compose ps
+```
+
+**Step 2 — Install the Database Navigator plugin in IntelliJ IDEA**
+
+1. Open **IntelliJ IDEA → Settings → Plugins → Marketplace**.
+2. Search for **"Database Navigator"** and click **Install**.
+3. Restart the IDE when prompted.
+
+**Step 3 — Connect to the local PostgreSQL database**
+
+1. Open the **DB Navigator** tool window (View → Tool Windows → DB Browser).
+2. Click the **"+"** icon to add a new connection and select **PostgreSQL**.
+3. Fill in the connection details matching `compose.yml` (host `localhost`, default port `5432`, database/user/password as configured).
+4. Click **Test Connection** to confirm connectivity, then **Apply / OK**.
+
+---
+
 #### Tasks — Flyway Migration
+> See [8_FLYWAY_SCHEMA_MANAGEMENT.md](8_FLYWAY_SCHEMA_MANAGEMENT.md) for full details on Flyway setup, configuration, and migration conventions.
 
 **Step 1 — `V1__init_schema.sql`: derive the schema from `LibraryEventDto`**
 
@@ -395,9 +428,6 @@ protected void onUpdate() {
     - `UPDATE` requires non-null `libraryEventId` → reject with `IllegalArgumentException`.
     - `book` must be present for both `ADD` and `UPDATE`.
 6. Validate DTO using bean validation (`Validator`) or manual checks in service.
-7. Classify exceptions:
-    - **Non-retryable:** `IllegalArgumentException`, `JsonProcessingException` (bad data, will never succeed).
-    - **Retryable:** all others (transient DB errors, network issues).
 
 
 #### Deliverables
