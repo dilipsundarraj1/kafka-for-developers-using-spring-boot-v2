@@ -11,6 +11,7 @@ It keeps the same technical content, but organizes it in an implementation-first
 - [Mapping to Current Project](#mapping-to-current-project)
 - [Part 1: Producer Reliability Configuration](#part-1-producer-reliability-configuration)
   - [1) Acknowledgment Modes (`acks`)](#1-acknowledgment-modes-acks)
+    - [1.1) `min.insync.replicas` (Broker/Topic Config)](#11-mininsyncreplicas-brokertopic-config)
   - [2) Retries and Retry Backoff](#2-retries-and-retry-backoff)
   - [3) Idempotent Producer (`enable.idempotence`)](#3-idempotent-producer-enableidempotence)
   - [4) `min.insync.replicas` (Broker/Topic Config)](#4-mininsyncreplicas-brokertopic-config)
@@ -127,7 +128,36 @@ Producer → sends message M1 → Leader (Broker 1) writes to log
 | `acks=-1` | Lower | Higher | Full — survives leader failure | Financial transactions, order events, or any domain where every message must be durably persisted |
 
 **Common pitfall**
-- Setting `acks=-1` alone is not enough. If `min.insync.replicas=1`, the broker only requires one replica (the leader itself) to acknowledge. You must set `min.insync.replicas=2` alongside `acks=-1` to get true durability (see Section 4).
+- Setting `acks=-1` alone is not enough. If `min.insync.replicas=1`, the broker only requires one replica (the leader itself) to acknowledge. You must set `min.insync.replicas=2` alongside `acks=-1` to get true durability (see Section 1.1).
+
+#### 1.1) `min.insync.replicas` (Broker/Topic Config)
+
+`min.insync.replicas` is a broker/topic-level safety gate used with `acks=-1`.
+
+- Recommended for production with RF=3: `min.insync.replicas=2`
+- Effect: the leader rejects writes if fewer than 2 replicas are in ISR
+- Failure mode when ISR drops below 2: producer sees `NotEnoughReplicasException` and retries
+
+**Safe combinations**
+
+| Replication Factor | `min.insync.replicas` | Broker failures tolerated | Notes |
+|---|---|---|---|
+| 3 | 2 | 1 | Recommended for production |
+| 3 | 3 | 0 | Maximum durability, zero fault tolerance |
+| 3 | 1 | 2 | Same as `acks=1` — not truly safe |
+| 1 | 1 | 0 | Development only |
+
+**Failure scenario**
+```text
+Cluster: 3 brokers, replication.factor=3, min.insync.replicas=2
+
+Broker 2 and Broker 3 restart simultaneously → ISR = {Broker 1} (size=1)
+Producer sends M1 with acks=-1
+Broker 1 checks: ISR size (1) < min.insync.replicas (2) → NotEnoughReplicasException
+Producer retries after retry.backoff.ms
+Broker 2 recovers → ISR = {Broker 1, Broker 2} (size=2)
+Producer retries again → write succeeds ✓
+```
 
 **Topic setup to enforce durability (`replication.factor=3`, `min.insync.replicas=2`)**
 
@@ -300,48 +330,10 @@ spring:
 
 ### 4) `min.insync.replicas` (Broker/Topic Config)
 
-**What**
-- A broker- or topic-level setting that defines the minimum number of in-sync replicas that must acknowledge a write when `acks=-1`.
+This topic is intentionally covered with `acks` in `Section 1.1` so durability settings stay together.
 
-**Typical value**
-- `min.insync.replicas=2` (with replication factor of 3).
+Quick command reference:
 
-**How it works internally**
-- `min.insync.replicas` is enforced by the **broker**, not the producer. When the producer sends a message with `acks=-1`, the leader checks whether the current ISR size meets `min.insync.replicas` before writing.
-- If the ISR size is below the threshold, the broker immediately returns `NotEnoughReplicasException` to the producer instead of writing the message. This is a safety gate — it prevents writing a message that would be under-replicated.
-
-**Safe combinations**
-
-| Replication Factor | `min.insync.replicas` | Broker failures tolerated | Notes |
-|---|---|---|---|
-| 3 | 2 | 1 | Recommended for production |
-| 3 | 3 | 0 | Maximum durability, zero fault tolerance |
-| 3 | 1 | 2 | Same as `acks=1` — not truly safe |
-| 1 | 1 | 0 | Development only |
-
-**Failure scenario**
-```text
-Cluster: 3 brokers, replication.factor=3, min.insync.replicas=2
-
-Broker 2 and Broker 3 restart simultaneously → ISR = {Broker 1} (size=1)
-Producer sends M1 with acks=-1
-Broker 1 checks: ISR size (1) < min.insync.replicas (2) → NotEnoughReplicasException
-Producer retries after retry.backoff.ms
-Broker 2 recovers → ISR = {Broker 1, Broker 2} (size=2)
-Producer retries again → write succeeds ✓
-```
-
-**Why it matters**
-- Even with `acks=-1`, if only 1 replica is in-sync, the message is effectively only persisted once.
-- Setting `min.insync.replicas=2` with `replication.factor=3` means the cluster can tolerate 1 broker failure with no data loss and no write interruption.
-
-**Common pitfall**
-- This is a **broker/topic-level setting** — it is not configured in `application.yml`. Set it when creating the topic or in the broker's `server.properties`:
-```properties
-# server.properties (broker-level default)
-min.insync.replicas=2
-```
-Or per-topic via the Kafka CLI:
 ```bash
 kafka-topics.sh --alter --topic library-events \
   --config min.insync.replicas=2 \
@@ -490,7 +482,7 @@ spring:
 Combined with broker/topic settings (not in `application.yml`):
 ```properties
 replication.factor=3          # 3 copies of each partition across brokers
-min.insync.replicas=2         # Section 4 — at least 2 replicas must ACK before writing
+min.insync.replicas=2         # Section 1.1 — at least 2 replicas must ACK before writing
 ```
 
 **Why each setting earns its place**
