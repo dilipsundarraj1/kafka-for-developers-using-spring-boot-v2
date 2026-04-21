@@ -6,7 +6,7 @@ spring:
   kafka:
     # bootstrap-servers and topic are set per-profile (see application-{dev|stage|prod}.yml)
     producer:
-      acks: all
+      acks: all # 0, 1, all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.LongSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer

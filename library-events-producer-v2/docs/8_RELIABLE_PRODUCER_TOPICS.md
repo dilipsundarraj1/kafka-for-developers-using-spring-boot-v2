@@ -129,6 +129,19 @@ Producer → sends message M1 → Leader (Broker 1) writes to log
 **Common pitfall**
 - Setting `acks=-1` alone is not enough. If `min.insync.replicas=1`, the broker only requires one replica (the leader itself) to acknowledge. You must set `min.insync.replicas=2` alongside `acks=-1` to get true durability (see Section 4).
 
+**Topic setup to enforce durability (`replication.factor=3`, `min.insync.replicas=2`)**
+
+Use the command below to update `library-events` and enforce `min.insync.replicas=2`:
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
+  --create --if-not-exists --topic library-events --partitions 3 --replication-factor 3
+
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
+  --alter --topic library-events \
+  --config min.insync.replicas=2
+```
+
 **Why it matters**
 - `acks=-1` is required for a reliable producer. Without it, data can be lost if the leader crashes before replicating.
 
@@ -158,7 +171,47 @@ spring:
 - Between retries, the producer refreshes its metadata to discover the new leader for the partition.
 - The retry is transparent to the application — the `CompletableFuture` returned by `kafkaTemplate.send()` only completes (successfully or exceptionally) after all retries are finished.
 
-**Retry timeline**
+#### 2.1 Cluster Down Behavior (First Failure Scenario)
+
+When the entire Kafka cluster is down, the producer cannot fetch metadata for the target topic.
+
+**What you will see**
+- Repeating background warnings such as:
+  - `Bootstrap broker localhost:9092 (id: -1 ...) disconnected`
+  - `Node -1 disconnected`
+- Request-thread failure after metadata wait expires:
+  - `org.apache.kafka.common.errors.TimeoutException: Topic library-events not present in metadata after 60000 ms.`
+
+**Why this happens**
+- `id=-1` is the bootstrap placeholder node used before the producer learns real broker IDs from metadata.
+- While the cluster is down, metadata refresh fails repeatedly in the background.
+- `send()` blocks while waiting for metadata up to `max.block.ms` (default `60000ms`), then fails fast for that request.
+- Background reconnect attempts continue after the request fails; the producer is still trying to recover for future sends.
+
+**Cluster-down timeline**
+```text
+t=0ms        send() called
+t=0..60000ms metadata fetch retries continue; bootstrap node (-1) disconnect warnings repeat
+t=60000ms    max.block.ms reached -> TimeoutException (topic not present in metadata)
+t>60000ms    background network thread keeps reconnecting until broker returns
+```
+
+#### 2.2 Transient Broker/Network Errors (Follow-up Scenario)
+
+**Topic setup for transient-failure testing (`min.insync.replicas=2`)**
+
+Use the command below to update `library-events` and enforce `min.insync.replicas=2`:
+
+```bash
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
+  --create --if-not-exists --topic library-events --partitions 3 --replication-factor 3
+
+docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
+  --alter --topic library-events \
+  --config min.insync.replicas=2
+```
+
+**Retry timeline (transient error)**
 ```text
 t=0ms     send() called — broker returns NOT_LEADER_FOR_PARTITION
 t=1000ms  retry 1 — broker still in leader election
