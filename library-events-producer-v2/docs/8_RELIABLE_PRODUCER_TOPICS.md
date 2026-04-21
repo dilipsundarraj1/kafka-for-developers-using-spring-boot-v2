@@ -171,32 +171,7 @@ spring:
 - Between retries, the producer refreshes its metadata to discover the new leader for the partition.
 - The retry is transparent to the application — the `CompletableFuture` returned by `kafkaTemplate.send()` only completes (successfully or exceptionally) after all retries are finished.
 
-#### 2.1 Cluster Down Behavior (First Failure Scenario)
-
-When the entire Kafka cluster is down, the producer cannot fetch metadata for the target topic.
-
-**What you will see**
-- Repeating background warnings such as:
-  - `Bootstrap broker localhost:9092 (id: -1 ...) disconnected`
-  - `Node -1 disconnected`
-- Request-thread failure after metadata wait expires:
-  - `org.apache.kafka.common.errors.TimeoutException: Topic library-events not present in metadata after 60000 ms.`
-
-**Why this happens**
-- `id=-1` is the bootstrap placeholder node used before the producer learns real broker IDs from metadata.
-- While the cluster is down, metadata refresh fails repeatedly in the background.
-- `send()` blocks while waiting for metadata up to `max.block.ms` (default `60000ms`), then fails fast for that request.
-- Background reconnect attempts continue after the request fails; the producer is still trying to recover for future sends.
-
-**Cluster-down timeline**
-```text
-t=0ms        send() called
-t=0..60000ms metadata fetch retries continue; bootstrap node (-1) disconnect warnings repeat
-t=60000ms    max.block.ms reached -> TimeoutException (topic not present in metadata)
-t>60000ms    background network thread keeps reconnecting until broker returns
-```
-
-#### 2.2 Transient Broker/Network Errors (Follow-up Scenario)
+#### 2.1 Transient Broker/Network Errors (First Failure Scenario)
 
 **Topic setup for transient-failure testing (`min.insync.replicas=2`)**
 
@@ -235,6 +210,31 @@ Total time: ~2000ms  (well within delivery.timeout.ms=120000ms)
 
 **Why it matters**
 - Retries handle transient broker/network failures transparently — the producer recovers automatically without application intervention.
+
+#### 2.2 Cluster Down Behavior (Follow-up Scenario)
+
+When the entire Kafka cluster is down, the producer cannot fetch metadata for the target topic.
+
+**What you will see**
+- Repeating background warnings such as:
+  - `Bootstrap broker localhost:9092 (id: -1 ...) disconnected`
+  - `Node -1 disconnected`
+- Request-thread failure after metadata wait expires:
+  - `org.apache.kafka.common.errors.TimeoutException: Topic library-events not present in metadata after 60000 ms.`
+
+**Why this happens**
+- `id=-1` is the bootstrap placeholder node used before the producer learns real broker IDs from metadata.
+- While the cluster is down, metadata refresh fails repeatedly in the background.
+- `send()` blocks while waiting for metadata up to `max.block.ms` (default `60000ms`), then fails fast for that request.
+- Background reconnect attempts continue after the request fails; the producer is still trying to recover for future sends.
+
+**Cluster-down timeline**
+```text
+t=0ms        send() called
+t=0..60000ms metadata fetch retries continue; bootstrap node (-1) disconnect warnings repeat
+t=60000ms    max.block.ms reached -> TimeoutException (topic not present in metadata)
+t>60000ms    background network thread keeps reconnecting until broker returns
+```
 
 **Spring Boot config**
 ```yaml
