@@ -13,6 +13,8 @@ spring:
       # value-serializer: org.apache.kafka.common.serialization.StringSerializer  # switch to this for StringSerializer testing
       properties:
         retry.backoff.ms: 1000
+        enable.idempotence: true
+
 
 app:
   api:
