@@ -167,9 +167,7 @@ Use the command below to update `library-events` and enforce `min.insync.replica
 docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
   --create --if-not-exists --topic library-events --partitions 3 --replication-factor 3
 
-docker exec kafka1 kafka-topics --bootstrap-server kafka1:19092 \
-  --alter --topic library-events \
-  --config min.insync.replicas=2
+docker exec kafka1 kafka-configs --bootstrap-server kafka1:19092 --entity-type topics --entity-name library-events --alter --add-config min.insync.replicas=2
 ```
 
 **Why it matters**
