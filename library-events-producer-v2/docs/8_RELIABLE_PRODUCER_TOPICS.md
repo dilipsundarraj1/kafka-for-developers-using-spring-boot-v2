@@ -44,7 +44,7 @@ Use this in sequence while implementing:
 ## Topic Dependency Flow
 
 ```text
-acks=all  ----------------------\
+acks=-1  ----------------------\
                                 v
 min.insync.replicas --> Durable Writes (no data loss)
                                 |
@@ -67,7 +67,7 @@ Error Handling (Callback) --> Graceful Failure / DLQ / Alert
 
 | Topic | Current State | Action Needed |
 |---|---|---|
-| `acks` | Not explicitly set (defaults to `1`) | Set to `all` |
+| `acks` | Not explicitly set (defaults to `-1` / `all` since Kafka 3.0+) | Already set to `all`; no change needed |
 | `retries` | Not explicitly set (defaults vary) | Explicitly configure |
 | `enable.idempotence` | Not set | Enable explicitly |
 | `min.insync.replicas` | Not configured | Configure on topic/broker |
@@ -89,13 +89,13 @@ These settings are applied in `application.yml` (or via `KafkaProducerConfig`) a
 
 **Values**
 - `acks=0` - Fire and forget; no acknowledgment (fastest, least reliable).
-- `acks=1` - Leader acknowledgment only (default); message is written to the leader's log.
-- `acks=all` (`-1`) - All in-sync replicas (ISR) must acknowledge (slowest, most reliable).
+- `acks=1` - Leader acknowledgment only; message is written to the leader's log.
+- `acks=-1` (`all`) - All in-sync replicas (ISR) must acknowledge (slowest, most reliable). **This is the default since Kafka 3.0+ / Spring Boot 3+.**
 
 **How it works internally**
 - When the producer calls `send()`, the message is placed in an internal buffer and then sent to the partition leader on the broker.
 - With `acks=1`, the leader writes the message to its local log and immediately sends an acknowledgment back to the producer. The followers replicate asynchronously — if the leader crashes before replication completes, the message is lost.
-- With `acks=all`, the leader waits until all replicas in the ISR have written the message to their logs before acknowledging. This guarantees the message survives a leader failure because at least one follower has the message.
+- With `acks=-1`, the leader waits until all replicas in the ISR have written the message to their logs before acknowledging. This guarantees the message survives a leader failure because at least one follower has the message.
 - The ISR (In-Sync Replicas) is the set of replicas that are fully caught up with the leader. A replica falls out of the ISR if it lags behind by more than `replica.lag.time.max.ms`.
 
 **Data loss scenario with `acks=1`**
@@ -107,7 +107,7 @@ Producer → sends message M1 → Leader (Broker 1) writes to log → ACK sent t
                                M1 is permanently lost
 ```
 
-**No data loss with `acks=all`**
+**No data loss with `acks=-1`**
 ```text
 Producer → sends message M1 → Leader (Broker 1) writes to log
                                Follower (Broker 2) writes to log
@@ -124,13 +124,13 @@ Producer → sends message M1 → Leader (Broker 1) writes to log
 |---|---|---|---|---|
 | `acks=0` | Highest | Lowest | None — messages can be lost | Retail: logging every product page view or homepage impression during a flash sale — losing a few view counts is acceptable, and throughput must keep up with thousands of events per second |
 | `acks=1` | High | Low | Partial — leader crash can lose data | Clickstream or user activity tracking where losing a small number of events under failure is tolerable |
-| `acks=all` | Lower | Higher | Full — survives leader failure | Financial transactions, order events, or any domain where every message must be durably persisted |
+| `acks=-1` | Lower | Higher | Full — survives leader failure | Financial transactions, order events, or any domain where every message must be durably persisted |
 
 **Common pitfall**
-- Setting `acks=all` alone is not enough. If `min.insync.replicas=1`, the broker only requires one replica (the leader itself) to acknowledge. You must set `min.insync.replicas=2` alongside `acks=all` to get true durability (see Section 4).
+- Setting `acks=-1` alone is not enough. If `min.insync.replicas=1`, the broker only requires one replica (the leader itself) to acknowledge. You must set `min.insync.replicas=2` alongside `acks=-1` to get true durability (see Section 4).
 
 **Why it matters**
-- `acks=all` is required for a reliable producer. Without it, data can be lost if the leader crashes before replicating.
+- `acks=-1` is required for a reliable producer. Without it, data can be lost if the leader crashes before replicating.
 
 **Spring Boot config**
 ```yaml
@@ -226,7 +226,7 @@ Consumer receives M1 once ✓
 ```
 
 **Implicit requirements**
-- When idempotence is enabled, Kafka automatically enforces: `acks=all`, `retries=Integer.MAX_VALUE`, and `max.in.flight.requests.per.connection <= 5`. If you set conflicting values, Kafka throws a `ConfigException` at startup.
+- When idempotence is enabled, Kafka automatically enforces: `acks=-1`, `retries=Integer.MAX_VALUE`, and `max.in.flight.requests.per.connection <= 5`. If you set conflicting values, Kafka throws a `ConfigException` at startup.
 
 **Common pitfall**
 - Idempotence is **per-session only**. If the producer restarts, it gets a new PID. A message sent just before restart and retried after restart can still be duplicated. For cross-session exactly-once guarantees, Kafka Transactions are required.
@@ -248,13 +248,13 @@ spring:
 ### 4) `min.insync.replicas` (Broker/Topic Config)
 
 **What**
-- A broker- or topic-level setting that defines the minimum number of in-sync replicas that must acknowledge a write when `acks=all`.
+- A broker- or topic-level setting that defines the minimum number of in-sync replicas that must acknowledge a write when `acks=-1`.
 
 **Typical value**
 - `min.insync.replicas=2` (with replication factor of 3).
 
 **How it works internally**
-- `min.insync.replicas` is enforced by the **broker**, not the producer. When the producer sends a message with `acks=all`, the leader checks whether the current ISR size meets `min.insync.replicas` before writing.
+- `min.insync.replicas` is enforced by the **broker**, not the producer. When the producer sends a message with `acks=-1`, the leader checks whether the current ISR size meets `min.insync.replicas` before writing.
 - If the ISR size is below the threshold, the broker immediately returns `NotEnoughReplicasException` to the producer instead of writing the message. This is a safety gate — it prevents writing a message that would be under-replicated.
 
 **Safe combinations**
@@ -271,7 +271,7 @@ spring:
 Cluster: 3 brokers, replication.factor=3, min.insync.replicas=2
 
 Broker 2 and Broker 3 restart simultaneously → ISR = {Broker 1} (size=1)
-Producer sends M1 with acks=all
+Producer sends M1 with acks=-1
 Broker 1 checks: ISR size (1) < min.insync.replicas (2) → NotEnoughReplicasException
 Producer retries after retry.backoff.ms
 Broker 2 recovers → ISR = {Broker 1, Broker 2} (size=2)
@@ -279,7 +279,7 @@ Producer retries again → write succeeds ✓
 ```
 
 **Why it matters**
-- Even with `acks=all`, if only 1 replica is in-sync, the message is effectively only persisted once.
+- Even with `acks=-1`, if only 1 replica is in-sync, the message is effectively only persisted once.
 - Setting `min.insync.replicas=2` with `replication.factor=3` means the cluster can tolerate 1 broker failure with no data loss and no write interruption.
 
 **Common pitfall**
@@ -444,10 +444,10 @@ min.insync.replicas=2         # Section 4 — at least 2 replicas must ACK befor
 
 | Setting | Without it | With it |
 |---|---|---|
-| `acks=all` | Message lost if leader crashes before replication | Message survives leader failure |
+| `acks=-1` | Message lost if leader crashes before replication | Message survives leader failure |
 | `retries=10` | Transient failures surface as errors to the app | App recovers automatically |
 | `enable.idempotence` | Retries produce duplicate messages | Exactly-once per partition per session |
-| `min.insync.replicas=2` | `acks=all` satisfied by 1 replica (no real safety) | Requires 2 copies before ACK |
+| `min.insync.replicas=2` | `acks=-1` satisfied by 1 replica (no real safety) | Requires 2 copies before ACK |
 | `max.in.flight=5` | Must set to 1 for ordering without idempotence | Safe at 5 with idempotence |
 | `retry.backoff.ms=1000` | Retries hammer recovering broker immediately | Gives broker time to recover |
 | `delivery.timeout.ms=120000` | Retries may expire before recovery completes | Enough headroom for 10 retries |
@@ -497,10 +497,10 @@ ProducerConfig values:
   ...
 ```
 
-**Step 3 — Observe `acks=1` vs `acks=all` behavior**
+**Step 3 — Observe `acks=1` vs `acks=-1` behavior**
 
 - With `acks=1`: `send()` completes as soon as the leader writes to its log. Under a rolling broker restart, you may occasionally see messages lost without any error.
-- With `acks=all`: `send()` only completes after all ISR replicas acknowledge. Under a rolling restart, the producer may briefly see `NotEnoughReplicasException` and retry — but no messages are lost.
+- With `acks=-1`: `send()` only completes after all ISR replicas acknowledge. Under a rolling restart, the producer may briefly see `NotEnoughReplicasException` and retry — but no messages are lost.
 
 **Step 4 — Observe retry logs**
 
@@ -1005,7 +1005,7 @@ private ConsumerRecord<Integer, String> waitForRecord(
 ## Suggested Implementation Order
 
 1. `acks` - Start here; this is the foundation of producer reliability.
-2. `min.insync.replicas` - Pair with `acks=all`.
+2. `min.insync.replicas` - Pair with `acks=-1`.
 3. Retries and retry backoff - Define behavior for transient failures.
 4. Idempotent producer - Prevent duplicates from retries.
 5. `max.in.flight.requests` - Confirm ordering guarantees.
@@ -1021,7 +1021,7 @@ private ConsumerRecord<Integer, String> waitForRecord(
 
 ## Implementation Checklist
 
-- [ ] Set `acks=all`.
+- [ ] Set `acks=-1`.
 - [ ] Configure `retries`, `retry.backoff.ms`, and `delivery.timeout.ms`.
 - [ ] Enable `enable.idempotence=true`.
 - [ ] Validate topic/broker replication strategy (`replication.factor=3`, `min.insync.replicas=2`).
