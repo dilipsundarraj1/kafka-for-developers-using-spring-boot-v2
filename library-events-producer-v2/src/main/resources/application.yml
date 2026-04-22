@@ -21,6 +21,22 @@ app:
     base-path: /v1/libraryevent
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true          # enables /actuator/health/liveness and /actuator/health/readiness
+        add-additional-paths: true  # also exposes /livez and /readyz at root
+      show-details: always
+      group:
+        readiness:
+          include: readinessState,kafkaReadiness   # readiness fails when Kafka is unreachable
+        liveness:
+          include: livenessState
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
   endpoints:
     web:
       exposure:
