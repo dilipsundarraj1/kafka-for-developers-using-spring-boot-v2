@@ -1,4 +1,4 @@
-package com.learnjava.health;
+package com.learnkafka.health;
 
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;

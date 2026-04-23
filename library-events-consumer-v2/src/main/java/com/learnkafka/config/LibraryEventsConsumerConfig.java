@@ -118,7 +118,7 @@ public class LibraryEventsConsumerConfig {
                 log.warn("Delivery attempt {} failed. Topic={}, Partition={}, Offset={}, Error={}",
                         deliveryAttempt,
                         record.topic(), record.partition(), record.offset(),
-                        ex.getMessage());
+                        ex.getMessage(), ex);
             }
 
             @Override
@@ -131,7 +131,7 @@ public class LibraryEventsConsumerConfig {
             public void recoveryFailed(ConsumerRecord<?, ?> record, Exception original, Exception failure) {
                 log.error("Record recovery failed. Topic={}, Partition={}, Offset={}, OriginalError={}, RecoveryError={}",
                         record.topic(), record.partition(), record.offset(),
-                        original.getMessage(), failure.getMessage());
+                        original.getMessage(), failure.getMessage(), original);
             }
         });
 

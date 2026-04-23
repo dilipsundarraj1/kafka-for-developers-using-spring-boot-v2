@@ -1,4 +1,4 @@
-package com.learnjava.domain;
+package com.learnkafka.domain;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;

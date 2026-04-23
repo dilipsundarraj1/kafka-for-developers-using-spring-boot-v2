@@ -10,7 +10,7 @@ public class LibraryEventMapper {
 
     public static LibraryEvent toEntity(LibraryEventDto dto) {
         Book book = toBookEntity(dto.book());
-        return new LibraryEvent(dto.libraryEventId(), dto.libraryEventType(), book);
+        return new LibraryEvent(dto.libraryEventId(), dto.eventType(), book);
     }
 
     public static Book toBookEntity(BookDto dto) {

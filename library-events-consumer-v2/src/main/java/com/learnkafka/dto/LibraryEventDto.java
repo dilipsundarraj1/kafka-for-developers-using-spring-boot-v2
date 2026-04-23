@@ -8,7 +8,7 @@ public record LibraryEventDto(
         Integer libraryEventId,
 
         @NotNull
-        LibraryEventType libraryEventType,
+        LibraryEventType eventType,
 
         @NotNull
         @Valid

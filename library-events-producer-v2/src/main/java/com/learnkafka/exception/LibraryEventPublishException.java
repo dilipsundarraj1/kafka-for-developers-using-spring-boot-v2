@@ -1,4 +1,4 @@
-package com.learnjava.exception;
+package com.learnkafka.exception;
 
 /**
  * Thrown when the Kafka producer fails to publish a {@code LibraryEvent}.

@@ -1,7 +1,7 @@
-package com.learnjava.controller;
+package com.learnkafka.controller;
 
-import com.learnjava.exception.LibraryEventPublishException;
-import com.learnjava.service.LibraryEventService;
+import com.learnkafka.exception.LibraryEventPublishException;
+import com.learnkafka.service.LibraryEventService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;

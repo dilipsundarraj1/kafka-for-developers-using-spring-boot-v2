@@ -1,8 +1,8 @@
-package com.learnjava.service;
+package com.learnkafka.service;
 
-import com.learnjava.domain.LibraryEvent;
-import com.learnjava.exception.LibraryEventPublishException;
-import com.learnjava.producer.LibraryEventProducer;
+import com.learnkafka.domain.LibraryEvent;
+import com.learnkafka.exception.LibraryEventPublishException;
+import com.learnkafka.producer.LibraryEventProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -44,7 +44,9 @@ public class LibraryEventService {
                 libraryEvent.libraryEventId(),
                 libraryEvent.book() != null ? libraryEvent.book().bookId() : null);
 
-        return libraryEventProducer.sendLibraryEvent(libraryEvent)
+        return libraryEventProducer
+                //.sendLibraryEvent(libraryEvent)
+                .sendLibraryEventWithTransactionalAnnotation(libraryEvent)
                 .thenApply(_ -> libraryEvent)
                 .exceptionally(ex -> {
                     throw new LibraryEventPublishException(

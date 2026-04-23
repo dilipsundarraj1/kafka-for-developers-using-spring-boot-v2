@@ -1,10 +1,10 @@
-package com.learnjava.controller;
+package com.learnkafka.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.learnjava.config.AppConstants;
-import com.learnjava.domain.Book;
-import com.learnjava.domain.LibraryEvent;
-import com.learnjava.domain.LibraryEventType;
+import com.learnkafka.config.AppConstants;
+import com.learnkafka.domain.Book;
+import com.learnkafka.domain.LibraryEvent;
+import com.learnkafka.domain.LibraryEventType;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;

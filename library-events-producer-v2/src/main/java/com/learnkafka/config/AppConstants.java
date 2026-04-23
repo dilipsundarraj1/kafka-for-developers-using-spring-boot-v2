@@ -1,4 +1,4 @@
-package com.learnjava.config;
+package com.learnkafka.config;
 
 public final class AppConstants {
 

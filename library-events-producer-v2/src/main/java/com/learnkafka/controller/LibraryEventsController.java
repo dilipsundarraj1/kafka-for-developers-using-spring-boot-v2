@@ -1,10 +1,10 @@
-package com.learnjava.controller;
+package com.learnkafka.controller;
 
-import com.learnjava.config.AppConstants;
-import com.learnjava.controller.LibraryEventsControllerAdvice.ErrorResponse;
-import com.learnjava.domain.LibraryEvent;
-import com.learnjava.domain.LibraryEventType;
-import com.learnjava.service.LibraryEventService;
+import com.learnkafka.config.AppConstants;
+import com.learnkafka.controller.LibraryEventsControllerAdvice.ErrorResponse;
+import com.learnkafka.domain.LibraryEvent;
+import com.learnkafka.domain.LibraryEventType;
+import com.learnkafka.service.LibraryEventService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

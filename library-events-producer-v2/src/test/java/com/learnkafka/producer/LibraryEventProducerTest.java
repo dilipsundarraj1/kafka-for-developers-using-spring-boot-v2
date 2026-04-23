@@ -1,9 +1,9 @@
-package com.learnjava.producer;
+package com.learnkafka.producer;
 
-import com.learnjava.domain.Book;
-import com.learnjava.domain.LibraryEvent;
-import com.learnjava.domain.LibraryEventType;
-import com.learnjava.exception.LibraryEventPublishException;
+import com.learnkafka.domain.Book;
+import com.learnkafka.domain.LibraryEvent;
+import com.learnkafka.domain.LibraryEventType;
+import com.learnkafka.exception.LibraryEventPublishException;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
