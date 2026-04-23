@@ -320,6 +320,19 @@ spring:
 
 Spring Boot automatically registers a `KafkaTransactionManager` bean when `transaction-id-prefix` is set — no manual bean declaration required.
 
+**Step 1b — Configure the consumer `application.yml` (downstream consumer service)**
+
+This configuration belongs to the **consumer application** — the downstream service that reads from `library-events`. Without this, consumers will process messages from transactions that were later aborted (phantom events).
+
+```yaml
+# Consumer service — application.yml
+spring:
+  kafka:
+    consumer:
+      properties:
+        isolation.level: read_committed   # only reads messages from committed transactions
+```
+
 **Step 2 — Annotate the service method with `@Transactional`**
 
 ```java
@@ -394,6 +407,19 @@ spring:
       transaction-id-prefix: lib-events-tx-   # required — enables transactional producer
       properties:
         enable.idempotence: true
+```
+
+**Step 1b — Configure the consumer `application.yml` (downstream consumer service)**
+
+This configuration belongs to the **consumer application** — the downstream service that reads from `library-events`. Without this, consumers will process messages from transactions that were later aborted (phantom events).
+
+```yaml
+# Consumer service — application.yml
+spring:
+  kafka:
+    consumer:
+      properties:
+        isolation.level: read_committed   # only reads messages from committed transactions
 ```
 
 **Step 2 — Call `executeInTransaction()` in the service**
