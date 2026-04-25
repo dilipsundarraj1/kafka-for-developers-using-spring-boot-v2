@@ -1,6 +1,48 @@
+<!-- TOC -->
+* [Library Events Producer API](#library-events-producer-api)
+  * [📋 Quick Links](#-quick-links)
+  * [🚀 Quick Start](#-quick-start)
+    * [Prerequisites](#prerequisites)
+    * [Setup & Run](#setup--run)
+  * [📚 Documentation](#-documentation)
+    * [Product Requirements Document (PRD.md)](#product-requirements-document-prdmd)
+    * [Implementation Plan (IMPLEMENTATION_PLAN_README.md)](#implementation-plan-implementation_plan_readmemd)
+    * [Architecture Diagram (ARCHITECTURE_DIAGRAM.md)](#architecture-diagram-architecture_diagrammd)
+  * [🏗️ Architecture Overview](#-architecture-overview)
+    * [Production/Development Flow](#productiondevelopment-flow)
+    * [Testing Approach](#testing-approach)
+  * [🔧 Configuration](#-configuration)
+    * [Kafka Configuration (`application.yml`)](#kafka-configuration-applicationyml)
+    * [Docker Compose Setup (`compose.yaml`)](#docker-compose-setup-composeyaml)
+  * [📦 Dependencies](#-dependencies)
+    * [Core](#core)
+    * [Testing](#testing)
+  * [🧪 Testing](#-testing)
+    * [Running Tests](#running-tests)
+    * [Integration Tests](#integration-tests)
+  * [📝 API Examples](#-api-examples)
+    * [Create Library Event (POST)](#create-library-event-post)
+    * [Update Library Event (PUT)](#update-library-event-put)
+  * [📂 Project Structure](#-project-structure)
+  * [🔍 Key Concepts](#-key-concepts)
+    * [Event Types](#event-types)
+    * [Validation Rules](#validation-rules)
+    * [Kafka Publishing](#kafka-publishing)
+  * [🛠️ Development](#-development)
+    * [Building](#building)
+    * [Development Mode](#development-mode)
+    * [Debugging](#debugging)
+  * [🩺 Health Probes](#-health-probes)
+  * [📊 Monitoring & Observability](#-monitoring--observability)
+  * [🚨 Error Handling](#-error-handling)
+  * [📞 Support & Contributions](#-support--contributions)
+  * [📄 License](#-license)
+<!-- TOC -->
+
 # Library Events Producer API
 
 A Spring Boot application that provides REST endpoints to publish library events to Apache Kafka. This service enables clients to emit library event changes (ADD, UPDATE) through a well-defined HTTP API.
+
 
 ## 📋 Quick Links
 
@@ -268,6 +310,55 @@ logging:
     com.learnkafka: DEBUG
     org.springframework.kafka: DEBUG
 ```
+
+## 🩺 Health Probes
+
+Spring Boot Actuator exposes liveness and readiness probes out of the box.
+The **readiness** probe includes a custom Kafka connectivity check — it reports `DOWN` when the Kafka cluster is unreachable.
+
+| Probe | URL | Kubernetes field |
+|---|---|---|
+| Liveness | `http://localhost:8080/actuator/health/liveness` | `livenessProbe` |
+| Readiness | `http://localhost:8080/actuator/health/readiness` | `readinessProbe` |
+| Liveness (short) | `http://localhost:8080/livez` | `livenessProbe` |
+| Readiness (short) | `http://localhost:8080/readyz` | `readinessProbe` |
+
+```bash
+# Quick health check
+curl -s http://localhost:8080/actuator/health/liveness  | jq .
+curl -s http://localhost:8080/actuator/health/readiness | jq .
+
+# Kubernetes-style short paths
+curl -s http://localhost:8080/livez  | jq .
+curl -s http://localhost:8080/readyz | jq .
+```
+
+**Expected response when healthy:**
+```json
+{
+  "status": "UP",
+  "components": {
+    "kafkaReadiness": { "status": "UP", "details": { "brokerCount": 3 } },
+    "readinessState": { "status": "UP" }
+  }
+}
+```
+
+**Expected response when Kafka is down (readiness only):**
+```json
+{
+  "status": "DOWN",
+  "components": {
+    "kafkaReadiness": { "status": "DOWN" },
+    "readinessState": { "status": "UP" }
+  }
+}
+```
+
+> Liveness reflects the Spring app lifecycle only — it stays `UP` even when Kafka is down.
+> Readiness reflects Kafka connectivity — it goes `DOWN` when the broker is unreachable, signalling Kubernetes to stop routing traffic to the pod.
+
+---
 
 ## 📊 Monitoring & Observability
 

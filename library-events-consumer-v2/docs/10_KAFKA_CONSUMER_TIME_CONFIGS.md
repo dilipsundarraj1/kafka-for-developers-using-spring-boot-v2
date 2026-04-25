@@ -34,9 +34,18 @@ This document covers each config independently first, then shows how they all co
 
 ## 1. Broker-Side Timing (Consumer ↔ Coordinator)
 
-These three settings all relate to the same question: **how does the broker know if a
-consumer is still alive?** They each answer a different part of that question and are
-covered independently below before being connected in [Section 6](#6-how-they-relate-to-each-other).
+> **What is the Coordinator?**
+> The "Coordinator" here refers to the **group coordinator** — a specific broker in the
+> Kafka cluster elected to manage a consumer group. It receives heartbeats, tracks session
+> timeouts, and triggers rebalances when a consumer joins, leaves, or is declared dead. It
+> also tracks committed offsets for the group via the internal `__consumer_offsets` topic.
+> Every consumer group has exactly one broker acting as its group coordinator at any given
+> time, determined by which partition of `__consumer_offsets` the group maps to.
+
+These three settings all relate to the same question: **how does the group coordinator
+know if a consumer is still alive?** They each answer a different part of that question
+and are covered independently below before being connected in
+[Section 5](#5-how-they-relate-to-each-other).
 
 ---
 
@@ -218,6 +227,36 @@ spring:
     consumer:
       max-poll-records: 100   # reduce if processing per record is expensive
 ```
+
+---
+
+> **Summary**
+> When the consumer calls `poll()`, it sends a fetch request to the broker. The broker
+> will not respond until either `fetch.min.bytes` of data is available **or**
+> `fetch.max.wait.ms` has elapsed — whichever comes first. The response is capped at
+> `fetch.max.bytes` total. Once the records arrive, `poll()` returns at most
+> `max.poll.records` of them to the listener.
+>
+> Together these four settings form the **fetch pipeline**:
+>
+> ```
+> poll() called
+>   │
+>   ├─ fetch request sent to broker
+>   │
+>   │  broker waits until:
+>   │    data ≥ fetch.min.bytes   ← accumulate enough data (throughput)
+>   │    OR
+>   │    fetch.max.wait.ms elapsed ← don't wait forever (latency)
+>   │
+>   ├─ broker responds (capped at fetch.max.bytes)
+>   │
+>   └─ poll() returns up to max.poll.records to the listener
+> ```
+>
+> The key trade-off: raising `fetch.min.bytes` and `fetch.max.wait.ms` improves
+> throughput by batching more records per fetch at the cost of higher latency.
+> Lowering them gives lower latency but more frequent round-trips to the broker.
 
 ---
 

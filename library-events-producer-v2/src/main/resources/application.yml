@@ -43,6 +43,11 @@ management:
       exposure:
         include: health,info
 
+logging:
+  level:
+    # Suppresses "No static resource favicon.ico" noise logged by Spring MVC on every browser request
+    org.springframework.web.servlet.resource: WARN
+
 springdoc:
   api-docs:
     path: /v3/api-docs
