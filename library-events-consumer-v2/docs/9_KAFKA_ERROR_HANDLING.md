@@ -540,7 +540,18 @@ errorHandler.addNotRetryableExceptions(
 
 ### Overview
 
-When retries are exhausted, a **`ConsumerRecordRecoverer`** determines what happens to the failed record. There are four general recovery patterns in Kafka consumer applications:
+Retries handle **transient** failures — the expectation is that the same message will eventually succeed if tried again. But retries are not infinite. When all retry attempts are exhausted, the consumer must make a deliberate decision: what happens to this message now?
+
+Without a recovery strategy, the answer is silent loss. Spring Kafka's `DefaultErrorHandler` catches the exception, logs it, advances the offset, and moves on. The message is gone — no trace, no way to replay it, no alert. In any system where messages have business value, this is unacceptable.
+
+Recovery is the answer to that problem. It is a last-resort handler — a `ConsumerRecordRecoverer` — that is invoked exactly once after all retries are exhausted. Its job is to ensure the failed record is **not silently dropped** but instead handled in a way that preserves it for inspection, replay, or auditing.
+
+The right recovery strategy depends on the nature of your system:
+- If the downstream is Kafka-native (another consumer can reprocess the DLT), use a **Dead Letter Topic**.
+- If you need human-visible failure tracking and scheduler-based replay, use a **failure table**.
+- In production systems where both visibility and replay matter, use **both**.
+
+There are four general recovery patterns in Kafka consumer applications:
 
 | Strategy | What happens | When to use |
 |---|---|---|
