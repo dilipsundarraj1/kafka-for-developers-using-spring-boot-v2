@@ -2,7 +2,7 @@ spring:
   application:
     name: library-events-producer-v2
   profiles:
-    active: dev          # override via -Dspring.profiles.active=stage|prod at runtime
+    active: ${SPRING_PROFILES_ACTIVE:dev}  # override via env var SPRING_PROFILES_ACTIVE
   kafka:
     # bootstrap-servers and topic are set per-profile (see application-{dev|stage|prod}.yml)
     producer:
@@ -20,6 +20,9 @@ spring:
 app:
   api:
     base-path: /v1/libraryevent
+
+server:
+  port: ${SERVER_PORT:8080}
 
 management:
   endpoint:
@@ -45,6 +48,7 @@ management:
 
 logging:
   level:
+    root: ${LOG_LEVEL:INFO}
     # Suppresses "No static resource favicon.ico" noise logged by Spring MVC on every browser request
     org.springframework.web.servlet.resource: WARN
 
