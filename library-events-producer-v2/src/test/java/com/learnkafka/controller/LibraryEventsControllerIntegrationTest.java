@@ -15,12 +15,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.web.servlet.RequestBuilder;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -39,8 +46,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {
         "spring.profiles.active=test",
         "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
-        "spring.kafka.topic=" + AppConstants.DEFAULT_LIBRARY_EVENTS_TOPIC
-})
+        "spring.kafka.topic=" + AppConstants.DEFAULT_LIBRARY_EVENTS_TOPIC})
 @AutoConfigureMockMvc
 @EmbeddedKafka(partitions = 1, topics = AppConstants.DEFAULT_LIBRARY_EVENTS_TOPIC)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -89,13 +95,9 @@ class LibraryEventsControllerIntegrationTest {
                 new Book(123L, "Kafka Using Spring Boot", "Dilip")
         );
 
-        MvcResult mvcResult = mockMvc.perform(post(AppConstants.API_BASE_PATH)
+        performAndResolve(post(AppConstants.API_BASE_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestEvent)))
-                .andExpect(request().asyncStarted())
-                .andReturn();
-
-        mockMvc.perform(asyncDispatch(mvcResult))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.eventType").value("ADD"))
                 .andExpect(jsonPath("$.book.bookId").value(123))
@@ -117,13 +119,9 @@ class LibraryEventsControllerIntegrationTest {
                 new Book(456L, "Spring Boot with Kafka Streams", "Jane Doe")
         );
 
-        MvcResult mvcResult = mockMvc.perform(post(AppConstants.API_BASE_PATH)
+        performAndResolve(post(AppConstants.API_BASE_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestEvent)))
-                .andExpect(request().asyncStarted())
-                .andReturn();
-
-        mockMvc.perform(asyncDispatch(mvcResult))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.eventType").value("ADD"))
                 .andExpect(jsonPath("$.book.bookId").value(456))
@@ -145,13 +143,9 @@ class LibraryEventsControllerIntegrationTest {
                 new Book(777L, "Distributed Systems Patterns", "Alex Smith")
         );
 
-        MvcResult mvcResult = mockMvc.perform(put(AppConstants.API_BASE_PATH)
+        performAndResolve(put(AppConstants.API_BASE_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestEvent)))
-                .andExpect(request().asyncStarted())
-                .andReturn();
-
-        mockMvc.perform(asyncDispatch(mvcResult))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.libraryEventId").value(999))
                 .andExpect(jsonPath("$.eventType").value("UPDATE"))
@@ -174,13 +168,9 @@ class LibraryEventsControllerIntegrationTest {
                 new Book(888L, "Kafka Internals", "Maria Garcia")
         );
 
-        MvcResult mvcResult = mockMvc.perform(put(AppConstants.API_BASE_PATH)
+        performAndResolve(put(AppConstants.API_BASE_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestEvent)))
-                .andExpect(request().asyncStarted())
-                .andReturn();
-
-        mockMvc.perform(asyncDispatch(mvcResult))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.libraryEventId").value(1001))
                 .andExpect(jsonPath("$.eventType").value("UPDATE"))
@@ -210,6 +200,29 @@ class LibraryEventsControllerIntegrationTest {
         }
 
         throw new AssertionError("Expected LibraryEvent was not published to Kafka within the timeout");
+    }
+
+    private ResultActions performAndResolve(RequestBuilder requestBuilder) throws Exception {
+        ResultActions resultActions = mockMvc.perform(requestBuilder);
+        MvcResult mvcResult = resultActions.andReturn();
+
+        if (mvcResult.getRequest().isAsyncStarted()) {
+            return mockMvc.perform(asyncDispatch(mvcResult));
+        }
+
+        return resultActions;
+    }
+
+    @TestConfiguration
+    static class TestKafkaTemplateConfig {
+
+        @Bean
+        @Primary
+        KafkaTemplate<Long, LibraryEvent> kafkaTemplate(ProducerFactory<Long, LibraryEvent> producerFactory) {
+            KafkaTemplate<Long, LibraryEvent> kafkaTemplate = new KafkaTemplate<>(producerFactory);
+            kafkaTemplate.setAllowNonTransactional(true);
+            return kafkaTemplate;
+        }
     }
 }
 

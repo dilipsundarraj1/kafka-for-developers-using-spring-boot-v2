@@ -978,4 +978,40 @@ Transactions require `acks=all`. If you set `acks=1` or `acks=0`, the broker wil
 The Consume-Transform-Produce pattern requires manual offset management. Spring Kafka sets this automatically when you use `@KafkaListener`, but verify it is not overridden to `true` in your config.
 
 ### Avoid Mixing Transactional and Non-Transactional Sends
-Once a `KafkaTemplate` is configured with a `transaction-id-prefix`, all sends go through transactions. Do not attempt to send outside a transaction context with that template — it will throw an exception.
+By default, once a `KafkaTemplate` is backed by a transaction-capable producer (`transaction-id-prefix`), calling `send()` outside an active transaction can throw:
+
+`IllegalStateException: No transaction is in process ...`
+
+Spring Kafka provides an escape hatch for mixed-mode usage:
+
+```java
+kafkaTemplate.setAllowNonTransactional(true);
+```
+
+With this flag enabled:
+- If a Kafka transaction is active, sends participate in that transaction.
+- If no transaction is active, sends are allowed as normal non-transactional sends.
+
+This is useful in integration tests where the same app context may exercise both transactional and non-transactional paths.
+
+#### Test-only override used in this project
+
+In `LibraryEventsControllerIntegrationTest`, we use a test-scoped `KafkaTemplate` bean to avoid changing global runtime behavior:
+
+```java
+@TestConfiguration
+static class TestKafkaTemplateConfig {
+
+    @Bean
+    @Primary
+    KafkaTemplate<Long, LibraryEvent> kafkaTemplate(ProducerFactory<Long, LibraryEvent> producerFactory) {
+        KafkaTemplate<Long, LibraryEvent> kafkaTemplate = new KafkaTemplate<>(producerFactory);
+        kafkaTemplate.setAllowNonTransactional(true);
+        return kafkaTemplate;
+    }
+}
+```
+
+Recommendation:
+- **Production default:** keep strict behavior (do not rely on `allowNonTransactional=true`) so missing transaction boundaries fail fast.
+- **Tests/dev mixed flows:** enable `allowNonTransactional=true` in test scope when needed.

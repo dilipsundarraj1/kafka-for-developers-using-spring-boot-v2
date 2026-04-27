@@ -45,7 +45,7 @@ public class LibraryEventService {
                 libraryEvent.book() != null ? libraryEvent.book().bookId() : null);
 
         return libraryEventProducer
-                //.sendLibraryEvent(libraryEvent)
+               // .sendLibraryEvent(libraryEvent)
                 .sendLibraryEventWithTransactionalAnnotation(libraryEvent)
                 .thenApply(_ -> libraryEvent)
                 .exceptionally(ex -> {
