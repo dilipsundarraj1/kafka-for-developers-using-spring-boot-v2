@@ -669,6 +669,15 @@ docker exec -it kafka1 kafka-console-consumer --bootstrap-server kafka1:19092 \
   --from-beginning
 ```
 
+```
+docker exec -it kafka1 kafka-console-consumer --bootstrap-server kafka1:19092 \
+--topic library-events.DLT \
+--property print.headers=true \
+--property print.key=true \
+--property print.timestamp=true \
+--property key.separator=" | "
+```
+
 **Common pitfall**
 - The DLT topic must exist on the broker before the consumer starts — or `auto.create.topics.enable=true` must be set. If the DLT topic doesn't exist and auto-creation is off, the `DeadLetterPublishingRecoverer` will throw a `TopicAuthorizationException` or `UnknownTopicOrPartitionException` at recovery time, and the original message will still be lost.
 

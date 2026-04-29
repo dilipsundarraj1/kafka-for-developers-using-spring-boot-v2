@@ -31,9 +31,9 @@ import java.util.concurrent.TimeoutException;
  * The returned {@link CompletableFuture} can be blocked on by the
  * caller when a synchronous guarantee is required.
  *
- * <p><b>Serializer mode (JsonSerializer — active):</b>
+ * <p><b>Serializer mode (JacksonJsonSerializer — active):</b>
  * {@code KafkaTemplate} serializes {@code LibraryEvent} automatically via Jackson's
- * {@code JsonSerializer}. To switch to {@code StringSerializer}, see the commented
+ * {@code JacksonJsonSerializer}. To switch to {@code StringSerializer}, see the commented
  * code in this class and toggle {@code application.yml}.
  */
 @Component
@@ -44,7 +44,7 @@ public class LibraryEventProducer {
     @Value("${spring.kafka.topic}")
     private String topic;
 
-    // JsonSerializer mode: KafkaTemplate carries the LibraryEvent object directly
+    // JacksonJsonSerializer mode: KafkaTemplate carries the LibraryEvent object directly
     private final KafkaTemplate<Long, LibraryEvent> kafkaTemplate;
     // StringSerializer mode (switch): swap the line above with the one below
     // private final KafkaTemplate<Long, String> kafkaTemplate;

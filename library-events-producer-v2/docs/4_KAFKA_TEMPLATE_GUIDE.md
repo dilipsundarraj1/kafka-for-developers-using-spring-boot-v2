@@ -644,7 +644,7 @@ When you call `kafkaTemplate.send(topic, key, value)`, a complex sequence of ope
 flowchart TB
     A["Application calls:<br/>kafkaTemplate.send('library-events', 1, event)"]
     S1["1. INTERCEPT & VALIDATE<br/>- Check if topic exists in metadata<br/>- Validate topic name format<br/>- Check if message is null"]
-    S2["2. SERIALIZATION<br/>- Key Serialization: Integer -> bytes<br/>- Input: 1 (Integer)<br/>- Process: IntegerSerializer.serialize()<br/>- Output: [0, 0, 0, 1] (4 bytes)<br/>- Value Serialization: LibraryEvent -> JSON -> bytes<br/>- Input: LibraryEvent object<br/>- Process: JsonSerializer.serialize()<br/>- Output: {libraryEventId:1,...} -> bytes"]
+    S2["2. SERIALIZATION<br/>- Key Serialization: Integer -> bytes<br/>- Input: 1 (Integer)<br/>- Process: IntegerSerializer.serialize()<br/>- Output: [0, 0, 0, 1] (4 bytes)<br/>- Value Serialization: LibraryEvent -> JSON -> bytes<br/>- Input: LibraryEvent object<br/>- Process: JacksonJsonSerializer.serialize()<br/>- Output: {libraryEventId:1,...} -> bytes"]
     S3["3. PARTITIONING<br/>- Determine target partition using partition assignment<br/>- Key-based partitioning: hash(key) % num_partitions<br/>- Result: Partition 0 (in single partition topic)"]
     S4["4. COMPRESSION (if enabled)<br/>- Apply compression codec (snappy/lz4/gzip/zstd)<br/>- Compress serialized bytes<br/>- Store compression type in message header"]
     S5["5. RECORD METADATA & HEADERS<br/>- Attach timestamp (current time)<br/>- Assign sequence number<br/>- Add custom headers (if any)<br/>- Create ProducerRecord object"]
@@ -693,7 +693,7 @@ Input Object:
   }
 
 Step 1: Select Serializer
-  Configured: JsonSerializer
+  Configured: JacksonJsonSerializer
   
 Step 2: Convert to JSON String
   {
@@ -727,7 +727,7 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
       
       # Value serializer: converts value type to bytes
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       
       # Additional properties
       properties:
@@ -1200,7 +1200,7 @@ spring:
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 ```
 
 ### Producer Implementation
@@ -1256,7 +1256,7 @@ kafkaTemplate.send("library-events", 123, libraryEvent);
 ### What Happens During Serialization
 
 1. **Key Serialization**: `IntegerSerializer` converts Integer → bytes
-2. **Value Serialization**: `JsonSerializer` converts LibraryEvent → JSON → bytes
+2. **Value Serialization**: `JacksonJsonSerializer` converts LibraryEvent -> JSON -> bytes
 
 ### Serialization Example
 ```
@@ -1594,7 +1594,7 @@ gantt
 
 ```mermaid
 graph LR
-    A["LibraryEvent Object<br/>{id:1, type:ADD, book:{...}}"] -->|JsonSerializer| B["JSON Bytes<br/>180 bytes"]
+    A["LibraryEvent Object<br/>{id:1, type:ADD, book:{...}}"] -->|JacksonJsonSerializer| B["JSON Bytes<br/>180 bytes"]
     B -->|No Compression| C1["Output<br/>180 bytes<br/>no header"]
 
     B -->|Snappy| C2["Output<br/>120 bytes<br/>+ snappy header"]
@@ -1710,7 +1710,7 @@ graph TB
 
 ```mermaid
 graph LR
-    A["Original Message<br/>180 bytes"] -->|JsonSerializer| B["JSON Bytes<br/>180 bytes"]
+    A["Original Message<br/>180 bytes"] -->|JacksonJsonSerializer| B["JSON Bytes<br/>180 bytes"]
     B -->|No Compression| C1["Output<br/>180 bytes<br/>no header"]
 
     B -->|Snappy| C2["Output<br/>120 bytes<br/>+ snappy header"]

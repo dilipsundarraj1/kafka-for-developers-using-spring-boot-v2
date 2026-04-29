@@ -5,9 +5,9 @@ spring:
   application:
     name: library-events-consumer
   datasource:
-    url: jdbc:postgresql://localhost:5432/mydatabase
-    username: myuser
-    password: secret
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/mydatabase}
+    username: ${SPRING_DATASOURCE_USERNAME:myuser}
+    password: ${SPRING_DATASOURCE_PASSWORD:secret}
   flyway:
     enabled: false
     locations: classpath:db/migration
@@ -21,7 +21,7 @@ spring:
         format_sql: true
   kafka:
     consumer:
-      bootstrap-servers: localhost:9092
+      bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
       group-id: library-events-listener-group32432
       key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
@@ -37,7 +37,7 @@ spring:
       acks: all # 0, 1, all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.LongSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 retry:
   scheduler:
     fixed-rate: 10000   # ms — how often to retry OPEN failure records
@@ -46,4 +46,26 @@ app:
   kafka:
     recovery:
       mode: DLT # options: failure-table | dlt | both
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+        add-additional-paths: true # exposes /livez and /readyz
+      show-details: always
+      group:
+        readiness:
+          include: readinessState,kafkaReadiness
+        liveness:
+          include: livenessState
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info
 

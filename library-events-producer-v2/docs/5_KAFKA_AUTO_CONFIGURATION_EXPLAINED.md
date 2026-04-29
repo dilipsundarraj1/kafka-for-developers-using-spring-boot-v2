@@ -66,7 +66,7 @@ spring:
   kafka:
     producer:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 ```
 
 **`application-dev.yml` (dev profile)**
@@ -91,7 +91,7 @@ spring:
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 ```
 
 ### Key Spring Kafka Classes Involved
@@ -168,7 +168,7 @@ For **this project**, the resulting map looks like:
 {
     "bootstrap.servers"  : "localhost:9092",
     "key.serializer"     : "org.apache.kafka.common.serialization.IntegerSerializer",
-    "value.serializer"   : "org.springframework.kafka.support.serializer.JsonSerializer"
+    "value.serializer"   : "org.springframework.kafka.support.serializer.JacksonJsonSerializer"
 }
 ```
 
@@ -252,7 +252,7 @@ public class LibraryEventProducer {
 │                                                                   │
 │  spring.kafka.bootstrap-servers = localhost:9092                   │
 │  spring.kafka.producer.key-serializer = IntegerSerializer         │
-│  spring.kafka.producer.value-serializer = JsonSerializer          │
+│  spring.kafka.producer.value-serializer = JacksonJsonSerializer   │
 └──────────────────────────┬────────────────────────────────────────┘
                            ↓
 ┌───────────────────────────────────────────────────────────────────┐
@@ -346,7 +346,7 @@ public class CustomKafkaConfig {
         Map<String, Object> props = new HashMap<>();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JacksonJsonSerializer.class);
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.RETRIES_CONFIG, 10);
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
@@ -402,7 +402,7 @@ spring:
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 ```
 
 ### Step 3: Spring Boot Reads Properties
@@ -512,7 +512,7 @@ This creates a Map like:
 {
     "bootstrap.servers": "localhost:9092",
     "key.serializer": "org.apache.kafka.common.serialization.IntegerSerializer",
-    "value.serializer": "org.springframework.kafka.support.serializer.JsonSerializer"
+    "value.serializer": "org.springframework.kafka.support.serializer.JacksonJsonSerializer"
 }
 ```
 
@@ -584,7 +584,7 @@ spring:
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 
 library:
   events:
@@ -713,7 +713,7 @@ library:
 │    Map<String, Object> {                                        │
 │      "bootstrap.servers": "localhost:9092",                     │
 │      "key.serializer": "...IntegerSerializer",                  │
-│      "value.serializer": "...JsonSerializer"                    │
+│      "value.serializer": "...JacksonJsonSerializer"             │
 │    }                                                            │
 └────────────────────────────┬────────────────────────────────────┘
                              ↓
@@ -784,7 +784,7 @@ spring:
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       acks: all
       retries: 3
       compression-type: snappy
@@ -801,7 +801,7 @@ public class KafkaConfig {
         Map<String, Object> configProps = new HashMap<>();
         configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
         configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
-        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JacksonJsonSerializer.class);
         // Custom configuration...
         return new DefaultKafkaProducerFactory<>(configProps);
     }

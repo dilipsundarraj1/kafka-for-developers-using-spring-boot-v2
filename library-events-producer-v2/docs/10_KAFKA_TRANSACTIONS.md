@@ -34,10 +34,8 @@
     * [Consume-Transform-Produce (CTP) Pattern](#consume-transform-produce-ctp-pattern)
     * [How Spring Kafka Implements CTP](#how-spring-kafka-implements-ctp)
     * [Consumer Transaction Flow Diagram](#consumer-transaction-flow-diagram)
-  * [Full EOS Picture — Producer + Consumer Together](#full-eos-picture--producer--consumer-together)
   * [How to Enable Transactions in This Project (Summary)](#how-to-enable-transactions-in-this-project-summary)
     * [Step 4 — Set Consumer Isolation Level (Downstream Services)](#step-4--set-consumer-isolation-level-downstream-services)
-  * [What Happens Under the Hood (Producer)](#what-happens-under-the-hood-producer)
   * [Does This Project Benefit from EOS?](#does-this-project-benefit-from-eos)
     * [Idempotent Producer — `enable.idempotence: true` ✅ Already enabled, genuinely useful](#idempotent-producer--enableidempotence-true--already-enabled-genuinely-useful)
     * [Transactions — `transaction-id-prefix` ❌ Not meaningful here](#transactions--transaction-id-prefix--not-meaningful-here)
@@ -49,6 +47,7 @@
     * [`acks=all` Is Mandatory](#acksall-is-mandatory)
     * [`enable.auto.commit` Must Be False for CTP](#enableautocommit-must-be-false-for-ctp)
     * [Avoid Mixing Transactional and Non-Transactional Sends](#avoid-mixing-transactional-and-non-transactional-sends)
+      * [Test-only override used in this project](#test-only-override-used-in-this-project)
 <!-- TOC -->
 
 ## What is a Kafka Transaction?
@@ -302,6 +301,33 @@ public class KafkaTransactionConfig {
         return new KafkaTemplate<>(producerFactory);
     }
 }
+```
+
+---
+
+**What Happens Under the Hood (Producer)**
+
+```
+LibraryEventsController
+  │  POST /v1/libraryevent
+  ▼
+LibraryEventService.createLibraryEvent()   ← @Transactional intercepts here
+  │
+  ├── KafkaTransactionManager.beginTransaction()
+  │     Producer sends BEGIN marker to Transaction Coordinator
+  │
+  ├── KafkaTemplate.send("library-events", key, libraryEvent)
+  │     Message is staged — NOT yet visible to read_committed consumers
+  │
+  └── Method returns normally
+        │
+        ├── KafkaTransactionManager.commitTransaction()
+        │     Transaction Coordinator writes COMMIT markers to all partitions
+        │     Message is NOW visible to read_committed consumers
+        │
+        └── [on exception] KafkaTransactionManager.abortTransaction()
+              Transaction Coordinator writes ABORT markers
+              Message is NEVER visible to read_committed consumers
 ```
 
 ---
@@ -642,7 +668,7 @@ spring:
       acks: all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.LongSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       transaction-id-prefix: lib-events-tx-    # <-- add this
       properties:
         retry.backoff.ms: 1000
@@ -862,35 +888,6 @@ input-topic
 
 ---
 
-## Full EOS Picture — Producer + Consumer Together
-
-```
-Producer service
-  @Transactional
-  KafkaTemplate.send("input-topic", event)
-  → message is staged until transaction commits
-  → read_committed consumers do not see it until then
-
-Consumer-Producer service
-  @KafkaListener + @Transactional
-  read_committed on input-topic          → never processes aborted events from producer
-  sendOffsetsToTransaction(offset)       → offset and publish are atomic
-  KafkaTemplate.send("output-topic")     → downstream only sees committed events
-
-Pure Consumer services
-  read_committed on output-topic
-  → only ever see fully committed events
-```
-
-| Layer | Guarantee | Mechanism |
-|-------|-----------|-----------|
-| Producer publishes atomically | All messages committed or none | `@Transactional` + `KafkaTransactionManager` |
-| Consumer-Producer processes without duplicates | Offset advances only if publish succeeds | `sendOffsetsToTransaction()` |
-| Consumer-Producer publishes atomically | Downstream only sees committed events | Producer transaction on output topic |
-| Pure consumers receive only valid events | Never see aborted or in-flight messages | `isolation.level = read_committed` |
-
----
-
 ## How to Enable Transactions in This Project (Summary)
 
 ### Step 4 — Set Consumer Isolation Level (Downstream Services)
@@ -902,33 +899,6 @@ spring:
     consumer:
       isolation-level: read_committed
       enable-auto-commit: false
-```
-
----
-
-## What Happens Under the Hood (Producer)
-
-```
-LibraryEventsController
-  │  POST /v1/libraryevent
-  ▼
-LibraryEventService.createLibraryEvent()   ← @Transactional intercepts here
-  │
-  ├── KafkaTransactionManager.beginTransaction()
-  │     Producer sends BEGIN marker to Transaction Coordinator
-  │
-  ├── KafkaTemplate.send("library-events", key, libraryEvent)
-  │     Message is staged — NOT yet visible to read_committed consumers
-  │
-  └── Method returns normally
-        │
-        ├── KafkaTransactionManager.commitTransaction()
-        │     Transaction Coordinator writes COMMIT markers to all partitions
-        │     Message is NOW visible to read_committed consumers
-        │
-        └── [on exception] KafkaTransactionManager.abortTransaction()
-              Transaction Coordinator writes ABORT markers
-              Message is NEVER visible to read_committed consumers
 ```
 
 ---

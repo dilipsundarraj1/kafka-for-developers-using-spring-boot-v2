@@ -467,7 +467,7 @@ spring:
       acks: all                                                          # Section 1 — require all ISR replicas to ACK
       retries: 10                                                        # Section 2 — retry up to 10 times on transient errors
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       properties:
         enable.idempotence: true                                         # Section 3 — prevent duplicates from retries
         max.in.flight.requests.per.connection: 5                         # Section 5 — safe with idempotence; maintains order
@@ -511,7 +511,7 @@ spring:
       acks: all
       retries: 10
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5

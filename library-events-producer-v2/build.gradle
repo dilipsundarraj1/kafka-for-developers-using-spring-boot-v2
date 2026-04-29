@@ -22,7 +22,7 @@ dependencies {
 	// kafka
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
-	// Kafka's JsonSerializer still requires classic Jackson 2.x (com.fasterxml.jackson) at runtime.
+	// Keep classic Jackson 2.x for explicit ObjectMapper usage in producer/config examples.
 	// Version must align with jackson-annotations:2.20 constrained by the Jackson 3.x BOM.
 	implementation 'com.fasterxml.jackson.core:jackson-databind:2.20.2'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'

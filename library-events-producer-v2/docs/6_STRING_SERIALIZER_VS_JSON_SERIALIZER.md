@@ -1,4 +1,4 @@
-# StringSerializer vs JsonSerializer in Kafka
+# StringSerializer vs JacksonJsonSerializer in Kafka
 
 ## Overview
 
@@ -7,7 +7,7 @@ When producing messages to Kafka, the **value serializer** determines how your J
 | Serializer | Class | Package |
 |---|---|---|
 | **StringSerializer** | `org.apache.kafka.common.serialization.StringSerializer` | `kafka-clients` (built-in) |
-| **JsonSerializer** | `org.springframework.kafka.support.serializer.JsonSerializer` | `spring-kafka` |
+| **JacksonJsonSerializer** | `org.springframework.kafka.support.serializer.JacksonJsonSerializer` | `spring-kafka` |
 
 ---
 
@@ -57,7 +57,7 @@ public class LibraryEventProducer {
 
 ---
 
-## JsonSerializer
+## JacksonJsonSerializer
 
 ### What It Does
 
@@ -69,7 +69,7 @@ Automatically converts any Java object into JSON bytes using Jackson's `ObjectMa
 spring:
   kafka:
     producer:
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 ```
 
 ### How You Use It
@@ -84,7 +84,7 @@ public class LibraryEventProducer {
 
     public CompletableFuture<SendResult<Integer, LibraryEvent>> sendLibraryEvent(LibraryEvent libraryEvent) {
         Integer key = libraryEvent.libraryEventId();
-        // Automatic serialization: JsonSerializer handles object → bytes
+        // Automatic serialization: JacksonJsonSerializer handles object -> bytes
         return kafkaTemplate.send(topicName, key, libraryEvent);
     }
 }
@@ -94,18 +94,18 @@ public class LibraryEventProducer {
 
 - `KafkaTemplate` is typed as `KafkaTemplate<Integer, LibraryEvent>` (strongly typed).
 - Serialization is handled transparently by the Kafka producer.
-- `JsonSerializer` creates its own internal `ObjectMapper` via `JacksonUtils.enhancedObjectMapper()`.
+- `JacksonJsonSerializer` performs the object-to-JSON conversion for Kafka values.
 
 ### ⚠️ Spring Boot 4.x Compatibility Warning
 
-In **Spring Boot 4.x**, the framework migrated from Jackson 2.x (`com.fasterxml.jackson`) to Jackson 3.x (`tools.jackson`). However, Spring Kafka's `JsonSerializer` still internally depends on **classic Jackson 2.x** (`com.fasterxml.jackson.databind.ObjectMapper`).
+In **Spring Boot 4.x**, prefer Spring Kafka's `JacksonJsonSerializer` for JSON value serialization in producer configs.
 
 This means you must explicitly add the classic Jackson 2.x `jackson-databind` to your build:
 
 ```groovy
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-kafka'
-    // Kafka's JsonSerializer still requires classic Jackson 2.x at runtime.
+    // JSON serialization support required by producer examples.
     // Version must align with jackson-annotations:2.20 constrained by the Jackson 3.x BOM.
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.20.2'
 }
@@ -126,7 +126,7 @@ java.lang.NoClassDefFoundError: com/fasterxml/jackson/annotation/JsonSerializeAs
 
 ## Side-by-Side Comparison
 
-| Aspect | StringSerializer | JsonSerializer |
+| Aspect | StringSerializer | JacksonJsonSerializer |
 |---|---|---|
 | **Serialization** | Manual (`objectMapper.writeValueAsString()`) | Automatic (handled internally) |
 | **KafkaTemplate type** | `KafkaTemplate<K, String>` | `KafkaTemplate<K, YourDomainObject>` |
@@ -152,7 +152,7 @@ java.lang.NoClassDefFoundError: com/fasterxml/jackson/annotation/JsonSerializeAs
 4. **You produce messages of varying types** — a single `KafkaTemplate<String, String>` can send any JSON payload.
 5. **You want simpler dependency management** — no need to manage Jackson 2.x/3.x version alignment.
 
-### Choose `JsonSerializer` When:
+### Choose `JacksonJsonSerializer` When:
 
 1. **You want cleaner producer code** — no manual serialization boilerplate.
 2. **You prefer strong typing** — `KafkaTemplate<Integer, LibraryEvent>` makes intent clear.
@@ -163,14 +163,14 @@ java.lang.NoClassDefFoundError: com/fasterxml/jackson/annotation/JsonSerializeAs
 
 ## This Project's Current Approach
 
-This project uses **`JsonSerializer`** as configured in `application.yml`:
+This project uses **`JacksonJsonSerializer`** as configured in `application.yml`:
 
 ```yaml
 spring:
   kafka:
     producer:
       key-serializer: org.apache.kafka.common.serialization.IntegerSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
 ```
 
 The producer sends `LibraryEvent` objects directly without manual conversion:
