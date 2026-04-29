@@ -9,7 +9,7 @@ Spring Boot 4.0 / Java 25 Kafka consumer that listens to topic `library-events`,
 
 ```
 Kafka topic "library-events"
-  → LibraryEventsConsumer (@KafkaListener, MANUAL ack)
+  → LibraryEventsConsumer (@KafkaListener, BATCH ack)
     → LibraryEventService.processEvent() (@Transactional)
       → LibraryEventMapper (DTO → Entity, static utility)
         → LibraryEventRepository.save() then BookRepository.save()
@@ -20,7 +20,7 @@ Kafka topic "library-events"
 - **Bidirectional OneToOne** — `LibraryEvent.book` is `mappedBy`, `Book.libraryEvent` owns the FK. On persist, `LibraryEvent` is saved first (to get the IDENTITY-generated ID), then `Book` is saved with the FK set. The `book` field is temporarily nulled to avoid cascade issues. See `LibraryEventService.processEvent()`.
 - **Book PK is producer-provided** (`@Id`, no `@GeneratedValue`); `LibraryEvent` PK is DB-generated (`IDENTITY`).
 - **Kafka deserialization** uses Spring's `JsonDeserializer` with type mapping configured in `application.yml` — the producer sends `com.learnkafka.domain.LibraryEvent` but it's remapped to `com.learnkafka.dto.LibraryEventDto` on this consumer side (`spring.json.type.mapping`).
-- **Manual offset commit** — `AckMode.MANUAL` in `LibraryEventsConsumerConfig`; consumer calls `acknowledgment.acknowledge()` in a `finally` block.
+- **BATCH offset commit** — `AckMode.BATCH` in `LibraryEventsConsumerConfig`; Spring Kafka commits offsets automatically after all records in a `poll()` batch are processed. No explicit `Acknowledgment` call needed in the listener.
 
 ## Build & Test Commands
 

@@ -6,7 +6,6 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -20,21 +19,12 @@ public class LibraryEventsConsumer {
         this.libraryEventService = libraryEventService;
     }
 
-    // Default BATCH ack mode — no Acknowledgment parameter needed
-    // @KafkaListener(topics = "library-events")
-    // public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord) {
-    //     log.info("ConsumerRecord : {}", consumerRecord);
-    //     libraryEventService.processEvent(consumerRecord);
-    // }
-
+    // BATCH ack mode (default) — offsets are committed automatically after all records
+    // from a poll() batch are processed. No Acknowledgment parameter needed.
     @KafkaListener(topics = "library-events")
-    public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord,
-                          Acknowledgment acknowledgment) {
+    public void onMessage(ConsumerRecord<Integer, LibraryEventDto> consumerRecord) {
         log.info("ConsumerRecord : {}", consumerRecord);
         libraryEventService.processEvent(consumerRecord);
-        // Only acknowledge on success — on exception, DefaultErrorHandler takes over:
-        // it retries with FixedBackOff, then persists to failure_record table on exhaustion.
-        acknowledgment.acknowledge();
     }
 }
 

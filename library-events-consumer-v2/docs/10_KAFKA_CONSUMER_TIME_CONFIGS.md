@@ -272,10 +272,10 @@ spring:
 How often offsets are automatically committed to the broker when
 `enable.auto.commit=true`. Only relevant when auto-commit is enabled.
 
-> **This project uses `AckMode.MANUAL`** (set in `LibraryEventsConsumerConfig`), so
-> auto-commit is effectively disabled. Offsets are committed explicitly by calling
-> `Acknowledgment.acknowledge()` inside the listener. This gives full control and
-> prevents losing or double-processing messages on restart.
+> **This project uses `AckMode.BATCH`** (default, set explicitly in `LibraryEventsConsumerConfig`),
+> so auto-commit is effectively disabled. Offsets are committed automatically by Spring Kafka
+> after all records from a single `poll()` batch have been processed. This gives reliable
+> at-least-once delivery without requiring explicit `Acknowledgment.acknowledge()` calls.
 
 ---
 
@@ -393,14 +393,14 @@ a truly dead consumer fast enough.
 
 ### Practical implication for this project
 
-`AckMode.MANUAL` is used in `LibraryEventsConsumerConfig`. The full sequence per record is:
+`AckMode.BATCH` is used in `LibraryEventsConsumerConfig`. The full sequence per batch is:
 
 1. Container calls `poll()` — bounded by `max.poll.interval.ms`.
 2. Up to `max.poll.records` records are returned — after fetching, broker waited at most `fetch.max.wait.ms`.
 3. `LibraryEventsConsumer.onMessage()` processes each record.
 4. On failure: `DefaultErrorHandler` retries with `FixedBackOff` (3× at 1 s intervals).
 5. On exhaustion: recoverer writes to `failure_record` table or DLT.
-6. `Acknowledgment.acknowledge()` commits the offset.
+6. After the batch completes, Spring Kafka commits offsets automatically (BATCH mode).
 7. Throughout all of this, `HeartbeatThread` is ticking every `heartbeat.interval.ms`.
 
 If step 3–5 takes longer than `max.poll.interval.ms` in total, a rebalance fires. The
@@ -417,7 +417,7 @@ not `session.timeout.ms`.
 | `heartbeat.interval.ms` | `3000` (default) | Kafka default |
 | `max.poll.interval.ms` | `300000` (default) | Kafka default |
 | `auto-offset-reset` | `latest` | `application.yml` |
-| `enable.auto.commit` | `false` (implicit) | `AckMode.MANUAL` in config |
+| `enable.auto.commit` | `false` (implicit) | `AckMode.BATCH` in config |
 
 ---
 

@@ -148,11 +148,9 @@ public class LibraryEventsConsumerConfig {
         var factory = new ConcurrentKafkaListenerContainerFactory<Integer, LibraryEventDto>();
         factory.setConsumerFactory(consumerFactory);
 
-        // Default: AckMode.BATCH — offsets committed after all records from poll() are processed
-        // factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.BATCH);
-
-        // Manual: offsets committed only when Acknowledgment.acknowledge() is called
-        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
+        // AckMode.BATCH (default) — offsets are committed automatically after all records
+        // from a single poll() batch have been processed by the listener.
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.BATCH);
 
         factory.setCommonErrorHandler(errorHandler);
 
