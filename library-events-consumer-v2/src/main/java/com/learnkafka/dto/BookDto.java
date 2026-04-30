@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotNull;
 
 public record BookDto(
         @NotNull
-        Integer bookId,
+        Long bookId,
 
         @NotBlank
         String bookName,

@@ -22,7 +22,7 @@ spring:
   kafka:
     consumer:
       bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-      group-id: library-events-listener-group32432
+      group-id: ${SPRING_KAFKA_CONSUMER_GROUP_ID:library-events-listener-group32432}
       key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       auto-offset-reset: latest

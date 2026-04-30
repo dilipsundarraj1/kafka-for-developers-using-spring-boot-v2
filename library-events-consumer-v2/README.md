@@ -49,6 +49,7 @@ Common runtime environment variables:
 - `SPRING_DATASOURCE_USERNAME` (example: `myuser`)
 - `SPRING_DATASOURCE_PASSWORD` (example: `secret`)
 - `SPRING_KAFKA_BOOTSTRAP_SERVERS` (example: `host.docker.internal:29092`)
+- `SPRING_KAFKA_CONSUMER_GROUP_ID` (example: `library-events-listener-group`)
 
 ## Run locally
 
@@ -68,6 +69,7 @@ docker run --name library-events-consumer \
   -e SPRING_DATASOURCE_USERNAME=myuser \
   -e SPRING_DATASOURCE_PASSWORD=secret \
   -e SPRING_KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:29092 \
+  -e SPRING_KAFKA_CONSUMER_GROUP_ID=library-events-listener-group \
   library-events-consumer:v1
 ```
 

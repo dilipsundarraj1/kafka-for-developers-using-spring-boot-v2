@@ -5,7 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 
 public record LibraryEventDto(
-        Integer libraryEventId,
+        Long libraryEventId,
 
         @NotNull
         LibraryEventType eventType,

@@ -54,8 +54,8 @@ class LibraryEventControllerIntegrationTest {
 
     @Test
     void getAllLibraryEvents_shouldReturnAllLibraryEvents() throws Exception {
-        persistLibraryEventWithBook(1, "Clean Code", "Robert C. Martin");
-        persistLibraryEventWithBook(2, "Effective Java", "Joshua Bloch");
+        persistLibraryEventWithBook(1L, "Clean Code", "Robert C. Martin");
+        persistLibraryEventWithBook(2L, "Effective Java", "Joshua Bloch");
 
         mockMvc.perform(get("/v1/library-events"))
                 .andExpect(status().isOk())
@@ -65,7 +65,7 @@ class LibraryEventControllerIntegrationTest {
 
     @Test
     void getAllLibraryEvents_shouldIncludeBookDetails() throws Exception {
-        persistLibraryEventWithBook(1, "Clean Code", "Robert C. Martin");
+        persistLibraryEventWithBook(1L, "Clean Code", "Robert C. Martin");
 
         mockMvc.perform(get("/v1/library-events"))
                 .andExpect(status().isOk())
@@ -95,7 +95,7 @@ class LibraryEventControllerIntegrationTest {
 
     @Test
     void getLibraryEventById_shouldReturnLibraryEvent() throws Exception {
-        LibraryEvent savedEvent = persistLibraryEventWithBook(1, "Clean Code", "Robert C. Martin");
+        LibraryEvent savedEvent = persistLibraryEventWithBook(1L, "Clean Code", "Robert C. Martin");
 
         mockMvc.perform(get("/v1/library-events/{id}", savedEvent.getLibraryEventId()))
                 .andExpect(status().isOk())
@@ -129,7 +129,7 @@ class LibraryEventControllerIntegrationTest {
 
     // ── Helper ───────────────────────────────────────────────
 
-    private LibraryEvent persistLibraryEventWithBook(Integer bookId, String bookName, String bookAuthor) {
+    private LibraryEvent persistLibraryEventWithBook(@jakarta.validation.constraints.NotNull Long bookId, String bookName, String bookAuthor) {
         LibraryEvent libraryEvent = new LibraryEvent(null, LibraryEventType.ADD, null);
         LibraryEvent savedEvent = libraryEventRepository.save(libraryEvent);
 

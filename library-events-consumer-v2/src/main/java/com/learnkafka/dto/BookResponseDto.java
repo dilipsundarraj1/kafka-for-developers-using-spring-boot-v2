@@ -3,10 +3,10 @@ package com.learnkafka.dto;
 import java.time.LocalDateTime;
 
 public record BookResponseDto(
-        Integer bookId,
+        Long bookId,
         String bookName,
         String bookAuthor,
-        Integer libraryEventId,
+        Long libraryEventId,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

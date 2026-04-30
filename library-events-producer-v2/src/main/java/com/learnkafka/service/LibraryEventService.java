@@ -79,7 +79,9 @@ public class LibraryEventService {
         //                 so LibraryEventsControllerAdvice.handlePublishException fires
         //                 correctly for async controller results.
         //                 (whenComplete already logged the failure at the transport layer.)
-        return libraryEventProducer.sendLibraryEvent(libraryEvent)
+        return libraryEventProducer
+                //.sendLibraryEvent(libraryEvent)
+                .sendLibraryEventTransactionalAsync(libraryEvent)
                 .thenApply(_ -> libraryEvent)
                 .exceptionally(ex -> {
                     throw new LibraryEventPublishException(

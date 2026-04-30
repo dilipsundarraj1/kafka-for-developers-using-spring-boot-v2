@@ -16,8 +16,7 @@ import java.time.LocalDateTime;
 public class Book {
 
     @Id
-    @NotNull
-    private Integer bookId;
+    private @NotNull Long bookId;
 
     @NotBlank
     private String bookName;
@@ -49,17 +48,17 @@ public class Book {
     public Book() {
     }
 
-    public Book(Integer bookId, String bookName, String bookAuthor) {
+    public Book(@NotNull Long bookId, String bookName, String bookAuthor) {
         this.bookId = bookId;
         this.bookName = bookName;
         this.bookAuthor = bookAuthor;
     }
 
-    public Integer getBookId() {
+    public @NotNull Long getBookId() {
         return bookId;
     }
 
-    public void setBookId(Integer bookId) {
+    public void setBookId(@NotNull Long bookId) {
         this.bookId = bookId;
     }
 

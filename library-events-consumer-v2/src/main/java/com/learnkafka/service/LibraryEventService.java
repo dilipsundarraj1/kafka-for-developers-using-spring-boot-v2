@@ -116,7 +116,7 @@ public class LibraryEventService {
                 .toList();
     }
 
-    public Optional<LibraryEventResponseDto> findById(Integer libraryEventId) {
+    public Optional<LibraryEventResponseDto> findById(Long libraryEventId) {
         log.info("Fetching library event with id: {}", libraryEventId);
         return libraryEventRepository.findById(libraryEventId)
                 .map(LibraryEventMapper::toLibraryEventResponseDto);

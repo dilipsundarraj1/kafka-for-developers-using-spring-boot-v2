@@ -85,7 +85,7 @@ class LibraryEventsConsumerIntegrationTest {
     @Test
     void consumeLibraryEvent_ADD_shouldPersistLibraryEventAndBook() throws Exception {
         // given
-        BookDto bookDto = new BookDto(1, "Clean Code", "Robert C. Martin");
+        BookDto bookDto = new BookDto(1L, "Clean Code", "Robert C. Martin");
         LibraryEventDto libraryEventDto = new LibraryEventDto(null, LibraryEventType.ADD, bookDto);
 
         // when — produce to embedded Kafka
@@ -121,10 +121,10 @@ class LibraryEventsConsumerIntegrationTest {
     @Test
     void consumeLibraryEvent_ADD_multipleMessages_shouldPersistAll() throws Exception {
         // given
-        BookDto bookDto1 = new BookDto(10, "Clean Code", "Robert C. Martin");
+        BookDto bookDto1 = new BookDto(10L, "Clean Code", "Robert C. Martin");
         LibraryEventDto dto1 = new LibraryEventDto(null, LibraryEventType.ADD, bookDto1);
 
-        BookDto bookDto2 = new BookDto(20, "Effective Java", "Joshua Bloch");
+        BookDto bookDto2 = new BookDto(20L, "Effective Java", "Joshua Bloch");
         LibraryEventDto dto2 = new LibraryEventDto(null, LibraryEventType.ADD, bookDto2);
 
         // when — produce two messages
@@ -147,13 +147,13 @@ class LibraryEventsConsumerIntegrationTest {
     @Test
     void consumeLibraryEvent_UPDATE_shouldPersistLibraryEvent() throws Exception {
         // given — first seed an ADD event so we have a valid libraryEventId for UPDATE
-        BookDto initialBookDto = new BookDto(99, "Design Patterns", "Gang of Four");
+        BookDto initialBookDto = new BookDto(99L, "Design Patterns", "Gang of Four");
         LibraryEventDto addDto = new LibraryEventDto(null, LibraryEventType.ADD, initialBookDto);
         kafkaTemplate.send("library-events", addDto).get(10, TimeUnit.SECONDS);
         waitForRecordCount(1, 10);
 
-        Integer existingLibraryEventId = libraryEventRepository.findAll().getFirst().getLibraryEventId();
-        BookDto updatedBookDto = new BookDto(99, "Design Patterns", "Gang of Four");
+        Long existingLibraryEventId = libraryEventRepository.findAll().getFirst().getLibraryEventId();
+        BookDto updatedBookDto = new BookDto(99L, "Design Patterns", "Gang of Four");
         LibraryEventDto libraryEventDto = new LibraryEventDto(existingLibraryEventId, LibraryEventType.UPDATE, updatedBookDto);
 
         // when
@@ -176,7 +176,7 @@ class LibraryEventsConsumerIntegrationTest {
     @Test
     void consumeLibraryEvent_withKey_shouldPersistSuccessfully() throws Exception {
         // given — producer sends with a Kafka message key
-        BookDto bookDto = new BookDto(42, "Refactoring", "Martin Fowler");
+        BookDto bookDto = new BookDto(42L, "Refactoring", "Martin Fowler");
         LibraryEventDto libraryEventDto = new LibraryEventDto(null, LibraryEventType.ADD, bookDto);
 
         // when — send with an explicit key

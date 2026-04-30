@@ -33,7 +33,7 @@ public class LibraryEventController {
 
     @GetMapping("/{libraryEventId}")
     public ResponseEntity<LibraryEventResponseDto> getLibraryEventById(
-            @PathVariable Integer libraryEventId) {
+            @PathVariable Long libraryEventId) {
         log.info("GET /v1/library-events/{}", libraryEventId);
         return libraryEventService.findById(libraryEventId)
                 .map(ResponseEntity::ok)

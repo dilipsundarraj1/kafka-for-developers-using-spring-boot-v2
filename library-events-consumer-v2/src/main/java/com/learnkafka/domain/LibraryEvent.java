@@ -20,7 +20,7 @@ public class LibraryEvent {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer libraryEventId;
+    private Long libraryEventId;
 
     @Enumerated(EnumType.STRING)
     @NotNull
@@ -49,17 +49,17 @@ public class LibraryEvent {
     public LibraryEvent() {
     }
 
-    public LibraryEvent(Integer libraryEventId, LibraryEventType eventType, Book book) {
+    public LibraryEvent(Long libraryEventId, LibraryEventType eventType, Book book) {
         this.libraryEventId = libraryEventId;
         this.eventType = eventType;
         this.book = book;
     }
 
-    public Integer getLibraryEventId() {
+    public Long getLibraryEventId() {
         return libraryEventId;
     }
 
-    public void setLibraryEventId(Integer libraryEventId) {
+    public void setLibraryEventId(Long libraryEventId) {
         this.libraryEventId = libraryEventId;
     }
 

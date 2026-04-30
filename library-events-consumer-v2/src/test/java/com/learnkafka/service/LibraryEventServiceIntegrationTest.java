@@ -45,7 +45,7 @@ class LibraryEventServiceIntegrationTest {
     @Test
     void processEvent_ADD_shouldPersistLibraryEventAndBook() {
         // given
-        BookDto bookDto = new BookDto(1, "Clean Code", "Robert C. Martin");
+        BookDto bookDto = new BookDto(1L, "Clean Code", "Robert C. Martin");
         LibraryEventDto libraryEventDto = new LibraryEventDto(null, LibraryEventType.ADD, bookDto);
         ConsumerRecord<Integer, LibraryEventDto> consumerRecord = buildConsumerRecord(null, libraryEventDto);
 
@@ -77,7 +77,7 @@ class LibraryEventServiceIntegrationTest {
     @Test
     void processEvent_ADD_shouldAutoGenerateLibraryEventId() {
         // given
-        BookDto bookDto = new BookDto(42, "Effective Java", "Joshua Bloch");
+        BookDto bookDto = new BookDto(42L, "Effective Java", "Joshua Bloch");
         LibraryEventDto libraryEventDto = new LibraryEventDto(null, LibraryEventType.ADD, bookDto);
         ConsumerRecord<Integer, LibraryEventDto> consumerRecord = buildConsumerRecord(null, libraryEventDto);
 
@@ -95,10 +95,10 @@ class LibraryEventServiceIntegrationTest {
     @Test
     void processEvent_ADD_multipleShouldPersistMultipleRecords() {
         // given
-        BookDto bookDto1 = new BookDto(1, "Clean Code", "Robert C. Martin");
+        BookDto bookDto1 = new BookDto(1L, "Clean Code", "Robert C. Martin");
         LibraryEventDto dto1 = new LibraryEventDto(null, LibraryEventType.ADD, bookDto1);
 
-        BookDto bookDto2 = new BookDto(2, "Effective Java", "Joshua Bloch");
+        BookDto bookDto2 = new BookDto(2L, "Effective Java", "Joshua Bloch");
         LibraryEventDto dto2 = new LibraryEventDto(null, LibraryEventType.ADD, bookDto2);
 
         // when

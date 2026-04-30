@@ -56,8 +56,8 @@ class BookControllerIntegrationTest {
 
     @Test
     void getAllBooks_shouldReturnAllBooks() throws Exception {
-        persistBookWithLibraryEvent(1, "Clean Code", "Robert C. Martin");
-        persistBookWithLibraryEvent(2, "Effective Java", "Joshua Bloch");
+        persistBookWithLibraryEvent(1L, "Clean Code", "Robert C. Martin");
+        persistBookWithLibraryEvent(2L, "Effective Java", "Joshua Bloch");
 
         mockMvc.perform(get("/v1/books"))
                 .andExpect(status().isOk())
@@ -66,7 +66,7 @@ class BookControllerIntegrationTest {
 
     @Test
     void getBookById_shouldReturnBook() throws Exception {
-        persistBookWithLibraryEvent(1, "Clean Code", "Robert C. Martin");
+        persistBookWithLibraryEvent(1L, "Clean Code", "Robert C. Martin");
 
         mockMvc.perform(get("/v1/books/1"))
                 .andExpect(status().isOk())
@@ -86,7 +86,7 @@ class BookControllerIntegrationTest {
 
     @Test
     void createBook_shouldPersistAndReturn201() throws Exception {
-        BookDto bookDto = new BookDto(10, "Domain-Driven Design", "Eric Evans");
+        BookDto bookDto = new BookDto(10L, "Domain-Driven Design", "Eric Evans");
 
         mockMvc.perform(post("/v1/books")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -112,8 +112,8 @@ class BookControllerIntegrationTest {
 
     @Test
     void updateBook_shouldUpdateAndReturn200() throws Exception {
-        persistBookWithLibraryEvent(1, "Clean Code", "Robert C. Martin");
-        BookDto updateDto = new BookDto(1, "Clean Code 2nd Edition", "Robert C. Martin");
+        persistBookWithLibraryEvent(1L, "Clean Code", "Robert C. Martin");
+        BookDto updateDto = new BookDto(1L, "Clean Code 2nd Edition", "Robert C. Martin");
 
         mockMvc.perform(put("/v1/books/1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -125,7 +125,7 @@ class BookControllerIntegrationTest {
 
     @Test
     void updateBook_notFound_shouldReturn404() throws Exception {
-        BookDto updateDto = new BookDto(999, "Non-existent", "Nobody");
+        BookDto updateDto = new BookDto(999L, "Non-existent", "Nobody");
 
         mockMvc.perform(put("/v1/books/999")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -135,7 +135,7 @@ class BookControllerIntegrationTest {
 
     @Test
     void deleteBook_shouldDeleteAndReturn204() throws Exception {
-        persistBookWithLibraryEvent(1, "Clean Code", "Robert C. Martin");
+        persistBookWithLibraryEvent(1L, "Clean Code", "Robert C. Martin");
 
         mockMvc.perform(delete("/v1/books/1"))
                 .andExpect(status().isNoContent());
@@ -147,7 +147,7 @@ class BookControllerIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    private void persistBookWithLibraryEvent(Integer bookId, String bookName, String bookAuthor) {
+    private void persistBookWithLibraryEvent(@jakarta.validation.constraints.NotNull Long bookId, String bookName, String bookAuthor) {
         LibraryEvent libraryEvent = new LibraryEvent(null, LibraryEventType.ADD, null);
         LibraryEvent savedEvent = libraryEventRepository.save(libraryEvent);
 

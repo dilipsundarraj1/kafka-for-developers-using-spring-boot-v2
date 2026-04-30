@@ -18,7 +18,7 @@ public class LibraryEventMapper {
     }
 
     public static BookResponseDto toBookResponseDto(Book book) {
-        Integer libraryEventId = book.getLibraryEvent() != null
+        Long libraryEventId = book.getLibraryEvent() != null
                 ? book.getLibraryEvent().getLibraryEventId()
                 : null;
         return new BookResponseDto(

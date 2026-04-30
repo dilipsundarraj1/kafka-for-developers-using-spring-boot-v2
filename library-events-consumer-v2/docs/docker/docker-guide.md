@@ -670,6 +670,7 @@ docker run --name library-events-consumer \
   -e SPRING_DATASOURCE_USERNAME=myuser \
   -e SPRING_DATASOURCE_PASSWORD=secret \
   -e SPRING_KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:29092 \
+  -e SPRING_KAFKA_CONSUMER_GROUP_ID=library-events-listener-group-dev \
   library-events-consumer:v1
 ```
 
@@ -680,6 +681,7 @@ docker run --name library-events-consumer \
 -e SPRING_DATASOURCE_URL            → DB URL for app running in Docker
 -e SPRING_DATASOURCE_USERNAME/PASSWORD → DB credentials passed at runtime
 -e SPRING_KAFKA_BOOTSTRAP_SERVERS   → Tell the app where Kafka is
+-e SPRING_KAFKA_CONSUMER_GROUP_ID   → Sets the Kafka consumer group id
 host.docker.internal:29092          → Kafka address reachable from inside Docker
 ```
 
@@ -693,6 +695,7 @@ docker run --name library-events-consumer \
   -e SPRING_DATASOURCE_USERNAME=myuser \
   -e SPRING_DATASOURCE_PASSWORD=secret \
   -e SPRING_KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:29092 \
+  -e SPRING_KAFKA_CONSUMER_GROUP_ID=library-events-listener-group \
   library-events-consumer:v1
 ```
 
@@ -812,6 +815,7 @@ docker run --name library-events-consumer-stage \
   -e SPRING_DATASOURCE_USERNAME=myuser \
   -e SPRING_DATASOURCE_PASSWORD=secret \
   -e SPRING_KAFKA_BOOTSTRAP_SERVERS=stage-broker1:9092,stage-broker2:9092 \
+  -e SPRING_KAFKA_CONSUMER_GROUP_ID=library-events-listener-group-stage \
   library-events-consumer:v1
 ```
 
@@ -825,6 +829,7 @@ docker run --name library-events-consumer-prod \
   -e SPRING_DATASOURCE_USERNAME=myuser \
   -e SPRING_DATASOURCE_PASSWORD=secret \
   -e SPRING_KAFKA_BOOTSTRAP_SERVERS=prod-broker1:9092,prod-broker2:9092,prod-broker3:9092 \
+  -e SPRING_KAFKA_CONSUMER_GROUP_ID=library-events-listener-group-prod \
   library-events-consumer:v1
 ```
 
@@ -837,6 +842,7 @@ Build once:
 Run anywhere by changing only:
   SPRING_PROFILES_ACTIVE        → controls which application-{profile}.yml loads
   SPRING_KAFKA_BOOTSTRAP_SERVERS → controls which Kafka cluster to connect to
+  SPRING_KAFKA_CONSUMER_GROUP_ID → controls which consumer group this instance joins
 
 Same image. Different behavior. Zero rebuilds.
 ```
@@ -917,6 +923,7 @@ docker run --name library-events-consumer \
   -e SPRING_DATASOURCE_USERNAME=myuser \
   -e SPRING_DATASOURCE_PASSWORD=secret \
   -e SPRING_KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:29092 \
+  -e SPRING_KAFKA_CONSUMER_GROUP_ID=library-events-listener-group \
   dilipthelip/library-events-consumer:v1
 ```
 
