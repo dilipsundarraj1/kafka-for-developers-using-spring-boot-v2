@@ -34,12 +34,12 @@ Why? Because software doesn't run in isolation. It depends on:
 Here's the classic scenario:
 
 ```
-Developer's Laptop         Production Server
+Developer's Mac            Production Server
 ─────────────────          ─────────────────
 Java 25                    Java 21
-Maven 3.9                  Maven 3.6
-Ubuntu 22.04               CentOS 7
-MySQL 8                    MySQL 5.7
+Build Tool A               Build Tool B
+macOS                      CentOS 7
+Database A                 Database B
 PORT=8080                  PORT=9090
 
 Result: App works locally. Crashes in production.
@@ -193,7 +193,7 @@ Different apps can have completely different dependencies and they won't interfe
 │  Container A    │    │  Container B    │    │  Container C    │
 │─────────────────│    │─────────────────│    │─────────────────│
 │  Java 8         │    │  Java 17        │    │  Python 3.11    │
-│  MySQL 5.7      │    │  Postgres 15    │    │  MongoDB        │
+│  SQL DB         │    │  Postgres 15    │    │  MongoDB        │
 │  App: Legacy    │    │  App: New API   │    │  App: ML Model  │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          All running side by side on the same machine ✓
