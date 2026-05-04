@@ -3,39 +3,173 @@
 <!-- TOC -->
 * [Actuator Health Endpoints — Liveness and Readiness](#actuator-health-endpoints--liveness-and-readiness)
   * [Overview](#overview)
+  * [The Production Problem](#the-production-problem)
+  * [Why Blind Traffic Routing Is Dangerous](#why-blind-traffic-routing-is-dangerous)
+  * [How Spring Boot Actuator Helps](#how-spring-boot-actuator-helps)
+  * [Why This Matters More for a Kafka Producer](#why-this-matters-more-for-a-kafka-producer)
+  * [Benefits of Health Checks](#benefits-of-health-checks)
+    * [Automatic Traffic Management](#automatic-traffic-management)
+    * [No Unnecessary Restarts](#no-unnecessary-restarts)
+    * [Faster Incident Response](#faster-incident-response)
+    * [Production-Grade Observability](#production-grade-observability)
+  * [Kubernetes Context](#kubernetes-context)
+  * [What We Will Cover](#what-we-will-cover)
   * [Step 1: Add the Dependency](#step-1-add-the-dependency)
   * [Step 2: Enable Health Endpoints in application.yml](#step-2-enable-health-endpoints-in-applicationyml)
-  * [Liveness and Readiness Checks](#liveness-and-readiness-checks)
-    * [Liveness](#liveness)
-    * [Readiness](#readiness)
-  * [KafkaReadinessHealthIndicator](#kafkareadinesshealthindicator)
-    * [Why It Matters](#why-it-matters)
+  * [Liveness Check](#liveness-check)
+  * [Readiness Check](#readiness-check)
+    * [KafkaReadinessHealthIndicator](#kafkareadinesshealthindicator)
     * [The Implementation](#the-implementation)
     * [Wiring It into the Readiness Group](#wiring-it-into-the-readiness-group)
   * [Available Endpoints](#available-endpoints)
   * [Checking the Endpoints](#checking-the-endpoints)
-  * [How Kubernetes Uses These Endpoints](#how-kubernetes-uses-these-endpoints)
 <!-- TOC -->
 
 ---
 
 ## Overview
 
-When an application runs in production, the platform managing it — whether that is Kubernetes, Docker Swarm, or a cloud service — needs a reliable way to ask two questions at any point in time:
+So far, we have been focusing on building the application, publishing messages to Kafka, testing the producer flow, and making sure our API works as expected.
 
-- Is this instance healthy enough to keep running?
-- Is this instance ready to handle incoming requests?
+But when this application runs in production(AWS or GKE or Kubernetes), there is one more very important question we need to answer.
 
-Without answers to these questions, the platform has no choice but to blindly route traffic to every running instance, even ones that are broken or waiting on a dependency. The result is failed requests, degraded user experience, and harder-to-diagnose outages.
+- How does the platform know whether this application is actually healthy?
+- How does the platform know whether this application is ready to receive traffic?
 
-Spring Boot Actuator solves this by exposing dedicated HTTP health endpoints that the platform can probe on a schedule. For this app specifically, the stakes are higher than a typical REST service — **every request results in a Kafka message being produced**. If the Kafka broker is unreachable, the app cannot do its job at all. An unhealthy Kafka connection should immediately stop traffic from being routed to the instance, not silently fail requests.
+This is where **Spring Boot Actuator health checks** become extremely useful.
 
-By enabling Actuator and the `KafkaReadinessHealthIndicator` in this app, we get:
+---
 
-- **Automatic traffic management** — the platform stops routing to an instance the moment Kafka becomes unreachable, and resumes automatically once it recovers.
-- **No unnecessary restarts** — a Kafka outage does not restart the pod; it just temporarily removes it from rotation.
-- **Faster incident response** — health endpoint details expose exactly which dependency is down and why, without needing to dig through logs.
-- **Production-grade observability** — the same endpoints used by Kubernetes probes can be called manually during debugging or by monitoring tools.
+## The Production Problem
+
+When an application runs in production, it is usually managed by a platform like **Kubernetes**, **AWS ECS**, or **Azure Container Apps**. These platforms constantly monitor the running instances of our application and need reliable answers to two questions:
+
+- **Is this application instance healthy enough to keep running?**
+- **Is this application instance ready to handle incoming requests?**
+
+These two questions may sound similar, but they are not the same. An application may be running but not ready to handle traffic.
+
+For example — the Spring Boot process may be up, the embedded Tomcat server may be running, and `/actuator/health` may respond. But if Kafka is down, this producer application cannot successfully publish library events. From a production standpoint, this instance should not receive traffic until Kafka becomes available again.
+
+---
+
+## Why Blind Traffic Routing Is Dangerous
+
+Without health checks, the platform only knows that the container or process is running. It has no clear signal about the real state of the application, so it continues routing requests to every running instance — even broken ones.
+
+```
+                        ┌──────────────────────┐
+       HTTP Request     │                      │
+  Client ─────────────▶ │    Load Balancer     │
+                        │                      │
+                        └──────────┬───────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │  No health signal — routes   │
+                    │  traffic to ALL instances    │
+                    └──────────────┬──────────────┘
+                                   │
+               ┌───────────────────┴────────────────────┐
+               ▼                                         ▼
+  ┌────────────────────────┐           ┌────────────────────────┐
+  │      Instance 1        │           │      Instance 2        │
+  │   Process : UP  ✓      │           │   Process : UP  ✓      │
+  │   Kafka   : UP  ✓      │           │   Kafka   : DOWN  ✗    │
+  └────────────┬───────────┘           └────────────┬───────────┘
+               │                                    │
+               ▼                                    ▼
+  ┌────────────────────────┐           ┌────────────────────────┐
+  │    Kafka Broker        │           │    Kafka Broker        │
+  │    Reachable  ✓        │           │    Unreachable  ✗      │
+  │    Message published   │           │    Publish FAILED      │
+  └────────────────────────┘           └────────────┬───────────┘
+                                                    │
+                                                    ▼
+                                       ┌────────────────────────┐
+                                       │   500 Error returned   │
+                                       │   to Client  ✗         │
+                                       └────────────────────────┘
+```
+
+This creates serious problems:
+
+- Users send requests, but the application fails while trying to publish the Kafka message.
+- API requests fail silently or return errors.
+- Outages become harder to diagnose because everything looks like the application is running, while an important dependency is not available.
+
+This is exactly the kind of production issue we want to avoid.
+
+---
+
+## How Spring Boot Actuator Helps
+
+Spring Boot Actuator solves this by exposing dedicated HTTP endpoints that report the real health of the application. These endpoints can be polled by any deployment platform on a regular schedule.
+
+Instead of guessing, the platform can call the health endpoint and make a decision based on the response:
+
+- Is the application alive?
+- Is the application ready to receive traffic?
+
+With the right configuration, important dependencies like Kafka can be included as part of the readiness check — meaning the application can clearly communicate its actual state to the platform.
+
+---
+
+## Why This Matters More for a Kafka Producer
+
+For this specific application, health checks are even more critical than for a typical REST service.
+
+**Why?** Because every incoming request results in a Kafka message being produced. When a client creates or updates a library event, the application does not just return a response — it publishes a message to the Kafka topic.
+
+Kafka is not an optional dependency here. **Kafka is part of the main business flow.**
+
+If Kafka is unreachable, this application cannot do its job correctly. We should not allow traffic to continue flowing to this instance when Kafka is unavailable. Instead, the platform should temporarily stop routing requests to this instance until Kafka becomes available again.
+
+---
+
+## Benefits of Health Checks
+
+### Automatic Traffic Management
+
+When Kafka becomes unreachable, the readiness endpoint reports that the application is not ready. The platform then removes that instance from the traffic rotation — users are no longer routed to an instance that cannot produce messages. When Kafka recovers, the readiness endpoint becomes healthy again and the platform automatically resumes sending traffic to that instance.
+
+### No Unnecessary Restarts
+
+A Kafka outage should not restart the application. If the application process itself is broken, a restart makes sense. But if Kafka is temporarily unavailable, restarting the container will not fix Kafka — the application may be perfectly fine.
+
+Instead of restarting unnecessarily, the platform removes the instance from rotation temporarily and brings it back once Kafka recovers. This is why readiness checks are so useful: they separate **application failure** from **dependency unavailability**.
+
+### Faster Incident Response
+
+When something goes wrong in production, health endpoints give an immediate, clear signal about which dependency is causing the problem — without digging through log lines.
+
+Instead of "The application is not working," the team can say: "The application is running, but Kafka is currently unavailable." That is a much clearer and more actionable signal for developers and operations teams.
+
+### Production-Grade Observability
+
+These health endpoints are not just for automated probes. They can be called manually during debugging and integrated with monitoring tools, dashboards, and alerting systems — making them part of the overall observability strategy for the application.
+
+---
+
+## Kubernetes Context
+
+In this course, we will be deploying and running this application in **Kubernetes**. Kubernetes relies heavily on health checks to manage the lifecycle of every running pod:
+
+- **Liveness probes** — Kubernetes uses these to decide whether the pod should keep running or be restarted.
+- **Readiness probes** — Kubernetes uses these to decide whether the pod should receive traffic.
+
+The work we do in this section is not just for local testing. It is directly connected to how our application will behave in a real production environment on Kubernetes.
+
+---
+
+## What We Will Cover
+
+In the following sections we will:
+
+1. Enable Spring Boot Actuator in the Library Events Producer application.
+2. Expose and configure the liveness and readiness health endpoints.
+3. Build and wire in the `KafkaReadinessHealthIndicator` so that Kafka availability is part of the readiness state.
+
+Once this is done, the application will be able to clearly signal to the platform whether it is ready to accept traffic — giving us a much more production-ready Kafka producer.
 
 ---
 
@@ -66,12 +200,8 @@ management:
       group:
         liveness:
           include: livenessState
-        readiness:
-          include: readinessState,kafkaReadiness  # readiness fails if Kafka is unreachable
   health:
     livenessstate:
-      enabled: true
-    readinessstate:
       enabled: true
   endpoints:
     web:
@@ -87,9 +217,7 @@ Key settings:
 
 ---
 
-## Liveness and Readiness Checks
-
-### Liveness
+## Liveness Check
 
 > "Is the app alive and not stuck in a broken state?"
 
@@ -97,21 +225,19 @@ The liveness probe checks whether the application process itself is healthy. It 
 
 **When it fails:** the platform restarts the container.
 
-### Readiness
+---
+
+## Readiness Check
 
 > "Is the app ready to accept traffic right now?"
 
-The readiness probe checks whether the app and all its required dependencies are available. It includes both `readinessState` and `kafkaReadiness`. If Kafka is down, the readiness probe fails even though the app process itself is fine.
+The readiness probe checks whether the app and all its required dependencies are available. Unlike liveness, readiness is about external conditions — if a dependency the app relies on is down, the app should stop accepting traffic until that dependency recovers.
 
 **When it fails:** the platform stops routing traffic to this instance — no restart, no dropped requests.
 
-The distinction matters: a Kafka outage should not cause a container restart. It should cause traffic to be redirected until Kafka recovers, and the instance should come back into rotation automatically once it does.
+This distinction matters: a Kafka outage should not cause a container restart. It should temporarily remove the instance from rotation, and bring it back automatically once Kafka recovers.
 
----
-
-## KafkaReadinessHealthIndicator
-
-### Why It Matters
+### KafkaReadinessHealthIndicator
 
 Spring Boot's built-in health indicators do not check Kafka broker availability out of the box in a way that is useful for a readiness probe. Without a custom indicator:
 
@@ -173,15 +299,21 @@ What it does:
 
 ### Wiring It into the Readiness Group
 
-The component name `kafkaReadiness` (from `@Component("kafkaReadiness")`) maps directly to the `include` list in `application.yml`:
+Now that the indicator exists, update `application.yml` to add the readiness group and include `kafkaReadiness` in it. The component name `kafkaReadiness` (from `@Component("kafkaReadiness")`) maps directly to the `include` list:
 
 ```yaml
-group:
-  readiness:
-    include: readinessState,kafkaReadiness
+management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,kafkaReadiness
+  health:
+    readinessstate:
+      enabled: true
 ```
 
-Spring Boot looks up the health contributor by that name and rolls it into the readiness response automatically. No additional wiring is needed.
+Spring Boot looks up the health contributor by that name and rolls it into the readiness response automatically. No additional wiring is needed. From this point on, if the Kafka broker becomes unreachable, `/readyz` will return `503` and the platform will stop routing traffic to this instance until the broker recovers.
 
 ---
 
@@ -260,25 +392,3 @@ curl http://localhost:8080/readyz
 
 HTTP status will be `503 Service Unavailable`.
 
----
-
-## How Kubernetes Uses These Endpoints
-
-```yaml
-livenessProbe:
-  httpGet:
-    path: /livez
-    port: 8080
-  initialDelaySeconds: 30
-  periodSeconds: 10
-
-readinessProbe:
-  httpGet:
-    path: /readyz
-    port: 8080
-  initialDelaySeconds: 15
-  periodSeconds: 10
-```
-
-- `/livez` fails → Kubernetes **restarts** the pod.
-- `/readyz` fails → Kubernetes **removes the pod from the service endpoint list** until it recovers. No restart, no lost messages.
