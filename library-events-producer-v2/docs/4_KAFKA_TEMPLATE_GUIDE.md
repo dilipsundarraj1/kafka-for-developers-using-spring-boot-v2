@@ -10,8 +10,7 @@
 - [Common KafkaTemplate Methods](#common-kafkatemplate-methods)
   - [1. Asynchronous Send (Non-blocking)](#1-asynchronous-send-non-blocking)
   - [2. Synchronous Send (Blocking)](#2-synchronous-send-blocking)
-  - [3. Send with Callbacks](#3-send-with-callbacks)
-  - [4. Send with Topic, Key, and Value](#4-send-with-topic-key-and-value)
+  - [3. Send with Topic, Key, and Value](#3-send-with-topic-key-and-value)
 - [Message Sending Process](#message-sending-process)
 - [Thread Model](#thread-model)
   - [Threading Model Diagram](#threading-model-diagram)
@@ -173,47 +172,7 @@ SendResult<Integer, LibraryEvent> result =
 - Can cause performance issues under high load
 
 
-### 3. Send with Callbacks
-```java
-ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
-    kafkaTemplate.send(topic, key, event);
-
-future.addCallback(
-    new ListenableFutureCallback<SendResult<Integer, LibraryEvent>>() {
-        @Override
-        public void onSuccess(SendResult<Integer, LibraryEvent> result) {
-            // Handle success
-            log.info("Message sent successfully: {}", result.getProducerRecord());
-        }
-        
-        @Override
-        public void onFailure(Throwable ex) {
-            // Handle failure
-            log.error("Failed to send message", ex);
-        }
-    }
-);
-```
-
-**Pros:**
-- Non-blocking (returns immediately)
-- Highest throughput and performance
-- Best for high-volume scenarios
-- Flexible success and failure handling
-- Access to detailed RecordMetadata in callbacks
-- Can implement custom retry logic in failure callback
-- Ideal for production systems
-
-**Cons:**
-- More complex code (requires callback implementation)
-- Requires careful error handling in failure callback
-- Debugging can be harder (asynchronous flow)
-- Callback execution timing may be unpredictable
-- Thread safety concerns if callbacks modify shared state
-- Need to ensure callbacks don't block or do heavy operations
-- Error handling spread across onSuccess/onFailure methods
-
-### 4. Send with Topic, Key, and Value
+### 3. Send with Topic, Key, and Value
 ```java
 // Topic: "library-events"
 // Key: 1 (libraryEventId)
