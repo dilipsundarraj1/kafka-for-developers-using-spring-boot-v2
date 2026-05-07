@@ -140,8 +140,8 @@ graph TD
 
 ### 1. Asynchronous Send (Non-blocking)
 ```java
-// Returns a ListenableFuture immediately
-ListenableFuture<SendResult<Integer, LibraryEvent>> future = 
+// Returns a CompletableFuture immediately
+CompletableFuture<SendResult<Integer, LibraryEvent>> future = 
     kafkaTemplate.send(topic, event);
 ```
 
@@ -156,7 +156,7 @@ ListenableFuture<SendResult<Integer, LibraryEvent>> future =
 
 ### 2. Synchronous Send (Blocking)
 ```java
-// Returns a ListenableFuture that blocks until message is sent
+// Returns a CompletableFuture that blocks until message is sent
 SendResult<Integer, LibraryEvent> result = 
     kafkaTemplate.send(topic, event).get(3, TimeUnit.SECONDS);
 ```
@@ -230,7 +230,7 @@ sequenceDiagram
     activate Buffer
     Buffer-->>KT: RecordAccumulator
     deactivate Buffer
-    KT-->>App: ListenableFuture<SendResult>
+    KT-->>App: CompletableFuture<SendResult>
     deactivate KT
     
     Note over Buffer: Messages accumulate in buffer
@@ -340,12 +340,12 @@ kafkaTemplate.send("library-events", 3, eventC);
 - Acts as the central gateway for all send requests
 - Implements synchronization internally to handle concurrent calls safely
 - Uses locks/atomics to manage shared state without exposing it to the caller
-- Returns a `ListenableFuture` immediately without blocking
+- Returns a `CompletableFuture` immediately without blocking
 
 **Thread-Safety Mechanism:**
 ```java
 // Internally, KafkaTemplate uses synchronization
-public ListenableFuture<SendResult<K, V>> send(String topic, K key, V value) {
+public CompletableFuture<SendResult<K, V>> send(String topic, K key, V value) {
     // Internal locking ensures thread-safety
     // Application doesn't see the locking overhead
     synchronized(producer) {
@@ -524,24 +524,24 @@ kafkaTemplate.send("library-events", 1, event)
 Time    Application Thread    Main Thread           I/O Thread        Callback Thread
 ────────────────────────────────────────────────────────────────────────────────────
 T=0ms   │ send() called      │                      │                 │
-        ├─ Returns immediately with ListenableFuture
-        │                    │
+         ├─ Returns immediately with CompletableFuture
+         │                    │
 T=1ms   │ Continue processing (non-blocking!)
-        │                    │ Serialize message 1  │                 │
-        │                    ├─ Add to batch        │                 │
-        │                    │                      │                 │
+         │                    │ Serialize message 1  │                 │
+         │                    ├─ Add to batch        │                 │
+         │                    │                      │                 │
 T=5ms   │ send() called      │ Serialize message 2  │                 │
-        ├─ Returns immediately with ListenableFuture
-        │ Continue processing (non-blocking!)
-        │                    ├─ Add to batch        │                 │
-        │                    │ Check batch size     │                 │
-        │                    │                      │                 │
+         ├─ Returns immediately with CompletableFuture
+         │ Continue processing (non-blocking!)
+         │                    ├─ Add to batch        │                 │
+         │                    │ Check batch size     │                 │
+         │                    │                      │                 │
 T=10ms  │ send() called      │ Batch not full       │                 │
-        ├─ Returns immediately with ListenableFuture
-        │ Continue processing (non-blocking!)
-        │                    ├─ Timeout reached     │                 │
-        │                    ├─ Flush batch ────────┤                 │
-        │                    │                      ├─ Send to broker │
+         ├─ Returns immediately with CompletableFuture
+         │ Continue processing (non-blocking!)
+         │                    ├─ Timeout reached     │                 │
+         │                    ├─ Flush batch ────────┤                 │
+         │                    │                      ├─ Send to broker │
         │                    │                      │                 │
 T=50ms  │                    │                      ├─ Receive ACK    │
         │                    │                      ├─ Enqueue ──────────┤
@@ -611,7 +611,7 @@ flowchart TB
     S7["7. BROKER METADATA CHECK<br/>- Verify broker connection is healthy<br/>- Get metadata for partition leader<br/>- Determine which broker to send to<br/>- Maintain broker connection pool"]
     S8["8. SEND TO BROKER<br/>- Create network request with batched messages<br/>- Use producer I/O thread to send asynchronously<br/>- Apply timeout (request.timeout.ms)<br/>- Handle backpressure if broker is slow"]
     S9["9. BROKER PROCESSING<br/>- Broker receives messages<br/>- Validates message format<br/>- Writes to log file (persists to disk)<br/>- Replicates to follower brokers (if configured)<br/>- Applies acks policy"]
-    S10["10. ACKNOWLEDGMENT & CALLBACK<br/>- Broker sends back acknowledgment<br/>- Callback executor invokes success/error handler<br/>- Return ListenableFuture with metadata<br/>- Application receives: topic, partition, offset"]
+    S10["10. ACKNOWLEDGMENT & CALLBACK<br/>- Broker sends back acknowledgment<br/>- Callback executor invokes success/error handler<br/>- Return CompletableFuture with metadata<br/>- Application receives: topic, partition, offset"]
     R["Return to Application"]
 
     A --> S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9 --> S10 --> R
@@ -1497,7 +1497,7 @@ sequenceDiagram
         Callback->>App: Return RecordMetadata
         deactivate Prod
     else Waiting
-        KT->>App: Return ListenableFuture
+        KT->>App: Return CompletableFuture
         deactivate KT
     end
 ```
