@@ -10,6 +10,7 @@
 5. [Introducing Docker](#5-introducing-docker)
 6. [Why Docker Needs a Linux VM on Mac](#6-why-docker-needs-a-linux-vm-on-mac)
 7. [Verify Docker is Installed](#7-verify-docker-is-installed)
+   - [Run your first container](#run-your-first-container)
 8. [Key Docker Commands](#8-key-docker-commands)
 9. [Your First Dockerfile](#9-your-first-dockerfile)
 10. [Build & Run Locally](#10-build--run-locally)
@@ -363,47 +364,139 @@ docker info
 
 ### Run your first container
 
+Before we run our own application as a container, let's get hands-on and understand how to pull, run, and interact with one. We'll use **nginx** for this.
+
+**What is nginx?**
+
+nginx (pronounced "engine-x") is a high-performance, open-source web server. It is widely used in production systems to serve static files, act as a reverse proxy, and handle load balancing. It is also one of the most popular images on Docker Hub, which makes it a perfect choice for learning Docker — it is small, fast to pull, and responds to HTTP requests immediately once running.
+
+In our case, we are not using nginx as part of our application. We are using it purely as a hands-on exercise to understand how Docker containers work before we run our own Spring Boot app.
+
+**Step 1: Pull the image**
+
 ```bash
-docker run hello-world
+docker pull nginx
 ```
 
-### What happens step by step
+Expected output:
 
 ```
-Step 1: Docker CLI receives the command "run hello-world"
-         ↓
-Step 2: Docker checks local image cache
-        → "hello-world" image not found locally
-         ↓
-Step 3: Docker pulls the image from Docker Hub
-        → "Unable to find image 'hello-world:latest' locally"
-        → "latest: Pulling from library/hello-world"
-         ↓
-Step 4: Docker creates a container from the image
-         ↓
-Step 5: Container runs, prints the "Hello from Docker!" message
-         ↓
-Step 6: Container exits (this app's job is done)
-```
-
-### Expected output
-
-```
-Unable to find image 'hello-world:latest' locally
-latest: Pulling from library/hello-world
+Using default tag: latest
+latest: Pulling from library/nginx
 ...
-Hello from Docker!
-
-This message shows that your installation appears to be working correctly.
-
-To generate this message, Docker took the following steps:
- 1. The Docker client contacted the Docker daemon.
- 2. The Docker daemon pulled the "hello-world" image from the Docker Hub.
- 3. The Docker daemon created a new container from that image...
- 4. The Docker daemon streamed that output to the Docker client...
+Status: Downloaded newer image for nginx:latest
+docker.io/library/nginx:latest
 ```
 
-You just pulled an image from the internet, ran it as a container, and saw its output — in under 5 seconds. That's the power of Docker.
+**Step 2: Verify the image is available locally**
+
+```bash
+docker images
+```
+
+```
+REPOSITORY   TAG       IMAGE ID       CREATED        SIZE
+nginx        latest    a72860cb95fd   2 weeks ago    192MB
+```
+
+**Step 3: Run the container**
+
+```bash
+docker run -d --name my-nginx -p 8080:80 nginx
+```
+
+```
+-d              → Run in background (detached mode)
+--name my-nginx → Give the container a readable name
+-p 8080:80      → Map host port 8080 to container port 80
+```
+
+**Step 4: Confirm the container is running**
+
+```bash
+docker ps
+```
+
+```
+CONTAINER ID   IMAGE   COMMAND                  STATUS         PORTS                  NAMES
+e3f1a2b4c5d6   nginx   "/docker-entrypoint.…"   Up 3 seconds   0.0.0.0:8080->80/tcp   my-nginx
+```
+
+**Step 5: Interact with it — send a request**
+
+```bash
+curl http://localhost:8080
+```
+
+Expected response:
+
+```html
+<!DOCTYPE html>
+<html>
+<head><title>Welcome to nginx!</title></head>
+<body>
+<h1>Welcome to nginx!</h1>
+<p>If you see this page, the nginx web server is successfully installed and working.</p>
+</body>
+</html>
+```
+
+The container received your HTTP request and returned a real response. You just interacted with a running container over the network.
+
+**Step 6: Stop the container**
+
+```bash
+docker stop my-nginx
+```
+
+The container stops gracefully. Verify it is no longer running:
+
+```bash
+docker ps
+```
+
+```
+CONTAINER ID   IMAGE   COMMAND   STATUS   PORTS   NAMES
+(empty — no running containers)
+```
+
+**Step 7: Start it again**
+
+The container still exists in a stopped state. Start it back up without recreating it:
+
+```bash
+docker start my-nginx
+```
+
+```bash
+docker ps
+```
+
+```
+CONTAINER ID   IMAGE   COMMAND                  STATUS         PORTS                  NAMES
+e3f1a2b4c5d6   nginx   "/docker-entrypoint.…"   Up 2 seconds   0.0.0.0:8080->80/tcp   my-nginx
+```
+
+Send another request to confirm it is back:
+
+```bash
+curl http://localhost:8080
+```
+
+**Step 8: Clean up**
+
+```bash
+docker stop my-nginx
+docker rm my-nginx
+```
+
+Remove the image from your local machine:
+
+```bash
+docker rmi nginx
+```
+
+You just pulled a real web server image, ran it, sent HTTP requests to it, stopped it, restarted it, and cleaned everything up. These are the same commands you will use with every Docker container — including our Spring Boot app.
 
 ---
 
@@ -445,8 +538,6 @@ docker run -d -p 8080:80 nginx
 #   Your machine's port 8080 → container's port 80
 #   Visit http://localhost:8080 to see nginx
 
-# Run and automatically remove container when it stops
-docker run --rm hello-world
 ```
 
 ### Port mapping explained visually
@@ -464,33 +555,6 @@ Command: docker run -p 8080:80 nginx
                         └─────── Host port (what you access from browser)
 ```
 
-### Stopping and Removing Containers
-
-```bash
-# List running containers
-docker ps
-
-# List ALL containers (running + stopped)
-docker ps -a
-
-# Stop a running container (graceful shutdown)
-docker stop <container-id or name>
-
-# Start a stopped container
-docker start <container-id or name>
-
-# Restart a container
-docker restart <container-id or name>
-
-# Forcefully kill a container (immediate)
-docker kill <container-id or name>
-
-# Remove a stopped container
-docker rm <container-id or name>
-
-# Remove a running container (force)
-docker rm -f <container-id or name>
-```
 
 ### Debugging and Inspecting Containers
 
