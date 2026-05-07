@@ -10,7 +10,7 @@
 2. [Unit Testing](#unit-testing)
    - [What Is a Unit Test?](#what-is-a-unit-test)
    - [Key Characteristics](#key-characteristics)
-   - [Example](#example-spring-boot--junit-5)
+   - [Example](#example-spring-boot--junit-6)
    - [What to Mock](#what-to-mock)
    - [Visual: How Unit Testing Works](#visual-how-unit-testing-works)
 3. [Integration Testing](#integration-testing)
@@ -142,7 +142,7 @@ A **unit test** validates a single, isolated piece of logic — typically a meth
 | **Deterministic** | Same input always gives same output |
 | **Focused** | Tests one thing only |
 
-### Example (Spring Boot / JUnit 5)
+### Example (Spring Boot / JUnit 6)
 
 ```java
 @ExtendWith(MockitoExtension.class)
