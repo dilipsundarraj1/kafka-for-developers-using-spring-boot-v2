@@ -1,5 +1,29 @@
 # Docker Installation Guide
 
+## What is Docker and Why Do You Need It?
+
+Docker is a platform that lets you run applications inside lightweight, isolated containers. Instead of installing tools directly on your machine and dealing with version conflicts or OS differences, you define what you need and Docker runs it consistently — on any machine.
+
+### Key Benefits
+
+- **No more "works on my machine"** — containers run the same way everywhere
+- **Instant infrastructure** — spin up Kafka, PostgreSQL, or any service with a single command, no manual installation needed
+- **Isolated environments** — each service runs in its own container without interfering with the rest of your system
+- **Easy teardown** — stop and remove containers without leaving traces on your machine
+- **Industry standard** — used across development, CI/CD pipelines, and production deployments
+
+### How This Course Uses Docker
+
+This course relies on Docker throughout:
+
+- **Infrastructure components** — Kafka and PostgreSQL run as Docker containers, so you do not need to install or configure them manually
+- **Consistent setup** — every student works with the same versions and configuration regardless of their OS
+- **Dockerizing the application** — later in the course, we will also package and run our Spring Boot application itself as a Docker container
+
+Docker is not optional for this course. Install it before proceeding to the next section.
+
+---
+
 <!-- TOC -->
 * [Docker Installation Guide](#docker-installation-guide)
   * [Mac](#mac)
