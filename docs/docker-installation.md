@@ -26,6 +26,9 @@ Docker is not optional for this course. Install it before proceeding to the next
 
 <!-- TOC -->
 * [Docker Installation Guide](#docker-installation-guide)
+  * [What is Docker and Why Do You Need It?](#what-is-docker-and-why-do-you-need-it)
+    * [Key Benefits](#key-benefits)
+    * [How This Course Uses Docker](#how-this-course-uses-docker)
   * [Mac](#mac)
     * [Install via Homebrew (Recommended)](#install-via-homebrew-recommended)
     * [Requirements](#requirements)

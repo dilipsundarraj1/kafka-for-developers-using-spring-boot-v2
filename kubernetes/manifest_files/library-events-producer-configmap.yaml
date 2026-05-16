@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: library-events-producer-config
+  namespace: default
+  labels:
+    app: library-events-producer
+data:
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "host.docker.internal:29092,host.docker.internal:29094,host.docker.internal:29096"
+  SPRING_PROFILES_ACTIVE: "dev"
+  SERVER_PORT: "8080"
+  LOG_LEVEL: "INFO"
