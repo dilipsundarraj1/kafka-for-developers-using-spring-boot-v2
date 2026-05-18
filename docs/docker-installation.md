@@ -1,8 +1,31 @@
 # Docker Installation Guide
 
+<!-- TOC -->
+* [Docker Installation Guide](#docker-installation-guide)
+  * [What is Docker and Why Do You Need It?](#what-is-docker-and-why-do-you-need-it)
+    * [Key Benefits](#key-benefits)
+    * [How This Course Uses Docker](#how-this-course-uses-docker)
+  * [Mac](#mac)
+    * [Install via Homebrew (Recommended)](#install-via-homebrew-recommended)
+    * [Requirements](#requirements)
+    * [Steps (Manual Install)](#steps-manual-install)
+  * [Windows](#windows)
+    * [Requirements](#requirements-1)
+    * [Steps](#steps)
+    * [Alternative: Use Hyper-V (without WSL 2)](#alternative-use-hyper-v-without-wsl-2)
+  * [Linux](#linux)
+    * [Requirements](#requirements-2)
+    * [Steps (Ubuntu / Debian)](#steps-ubuntu--debian)
+    * [Steps (Fedora / RHEL)](#steps-fedora--rhel)
+  * [Verify Docker Compose](#verify-docker-compose)
+  * [Quick Sanity Check](#quick-sanity-check)
+<!-- TOC -->
+
+
 ## What is Docker and Why Do You Need It?
 
-Docker is a platform that lets you run applications inside lightweight, isolated containers. Instead of installing tools directly on your machine and dealing with version conflicts or OS differences, you define what you need and Docker runs it consistently — on any machine.
+- Docker is a platform that lets you run applications inside lightweight, isolated containers. 
+- Instead of installing tools directly on your machine and dealing with version conflicts or OS differences, you define what you need and Docker runs it consistently — on any machine.
 
 ### Key Benefits
 
@@ -24,26 +47,6 @@ Docker is not optional for this course. Install it before proceeding to the next
 
 ---
 
-<!-- TOC -->
-* [Docker Installation Guide](#docker-installation-guide)
-  * [What is Docker and Why Do You Need It?](#what-is-docker-and-why-do-you-need-it)
-    * [Key Benefits](#key-benefits)
-    * [How This Course Uses Docker](#how-this-course-uses-docker)
-  * [Mac](#mac)
-    * [Install via Homebrew (Recommended)](#install-via-homebrew-recommended)
-    * [Requirements](#requirements)
-    * [Steps (Manual Install)](#steps-manual-install)
-  * [Windows](#windows)
-    * [Requirements](#requirements-1)
-    * [Steps](#steps)
-    * [Alternative: Use Hyper-V (without WSL 2)](#alternative-use-hyper-v-without-wsl-2)
-  * [Linux](#linux)
-    * [Requirements](#requirements-2)
-    * [Steps (Ubuntu / Debian)](#steps-ubuntu--debian)
-    * [Steps (Fedora / RHEL)](#steps-fedora--rhel)
-  * [Verify Docker Compose](#verify-docker-compose)
-  * [Quick Sanity Check](#quick-sanity-check)
-<!-- TOC -->
 
 ## Mac
 
@@ -235,18 +238,6 @@ If you prefer not to use WSL 2, Docker Desktop can run on Hyper-V instead.
    docker --version
    docker run hello-world
    ```
-
----
-
-## Verify Docker Compose
-
-Docker Desktop (Windows and Mac) includes Docker Compose out of the box. On Linux, it is installed as a plugin with the commands above.
-
-Verify with:
-
-```bash
-docker compose version
-```
 
 ---
 
