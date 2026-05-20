@@ -2379,27 +2379,6 @@ flowchart TD
 
 **Use liveness when:** the app can get into a broken state (deadlock, memory leak, hung thread) where the process is still running but no longer functional. Kubernetes will automatically restart it.
 
-**Watch liveness probe status:**
-
-```shell
-# See liveness probe config and recent failures in the Events section
-kubectl describe pod <pod-name>
-
-# Watch for liveness probe failures and container restarts in real time
-kubectl get pods --watch
-
-# Check restart count — a rising RESTARTS count indicates liveness probe failures
-kubectl get pods
-# NAME                                        READY   STATUS    RESTARTS   AGE
-# library-events-producer-6b7d9f8c4d-xk9p2   1/1     Running   3          10m
-
-# See cluster-level liveness failure events
-kubectl get events --field-selector reason=Unhealthy
-
-# Watch all cluster events in real time (shows probe failures, restarts, scheduling)
-kubectl get events --watch
-```
-
 ---
 
 ### What is a Readiness Probe?
@@ -2426,26 +2405,6 @@ flowchart TD
 ```
 
 **Use readiness when:** the app needs time to warm up (loading caches, connecting to Kafka/DB), or temporarily becomes unable to serve traffic (downstream dependency down). Traffic is paused, not the container.
-
-**Watch readiness probe status:**
-
-```shell
-# READY column shows 0/1 while readiness probe is failing, 1/1 when passing
-kubectl get pods --watch
-
-# See readiness probe config and failure events
-kubectl describe pod <pod-name>
-
-# Check which Pods the Service is currently routing traffic to
-# An unready Pod will be absent from the Endpoints list
-kubectl get endpoints library-events-producer
-
-# See readiness failure events
-kubectl get events --field-selector reason=Unhealthy
-
-# Watch all cluster events in real time (shows probe failures, Pod removal from endpoints)
-kubectl get events --watch
-```
 
 ---
 
