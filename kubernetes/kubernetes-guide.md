@@ -1733,14 +1733,24 @@ NAME                               CLASS   HOSTS                    ADDRESS     
 library-events-producer-ingress    nginx   library-producer.local   192.168.49.2   80      10s
 ```
 
-**Add the hostname to your hosts file so your Mac resolves it:**
+**Add the hostname to your hosts file so your machine resolves it:**
 
+**Mac/Linux:**
 ```shell
 # Get the Minikube IP
 minikube ip
 
 # Add the entry (replace with your minikube IP)
 echo "192.168.49.2  library-producer.local" | sudo tee -a /etc/hosts
+```
+
+**Windows (PowerShell as Administrator):**
+```powershell
+# Get the Minikube IP
+minikube ip
+
+# Add the entry (replace with your minikube IP)
+Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "192.168.49.2  library-producer.local"
 ```
 
 **Access the app:**
@@ -1836,9 +1846,16 @@ kubectl delete -f library-events-producer-deployment-v1.yaml
 # Enable the Ingress addon (once)
 minikube addons enable ingress
 
-# Add the hostname to your hosts file (once)
+# Add the hostname to your hosts file (once) — Mac/Linux:
 echo "$(minikube ip)  library-producer.local" | sudo tee -a /etc/hosts
+```
 
+```powershell
+# Windows (PowerShell as Administrator) — Add the hostname to your hosts file (once):
+Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "$(minikube ip)  library-producer.local"
+```
+
+```shell
 # Apply the Deployment, Service, and Ingress
 kubectl apply -f library-events-producer-deployment-v1.yaml
 kubectl apply -f library-events-producer-service.yaml
@@ -2594,7 +2611,10 @@ minikube service library-events-producer
 kubectl port-forward deployment/library-events-producer 8080:8080
 
 # Option C — Ingress (add hosts entry first)
+# Mac/Linux:
 echo "$(minikube ip)  library-producer.local" | sudo tee -a /etc/hosts
+# Windows (PowerShell as Administrator):
+# Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "$(minikube ip)  library-producer.local"
 minikube tunnel
 # then open http://library-producer.local/swagger-ui/index.html
 ```
@@ -2817,18 +2837,30 @@ spec:
 
 Add the hostname to your hosts file:
 
+**Mac/Linux:**
 ```shell
 echo "$(minikube ip)  library-consumer.local" | sudo tee -a /etc/hosts
+```
+
+**Windows (PowerShell as Administrator):**
+```powershell
+Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "$(minikube ip)  library-consumer.local"
 ```
 
 ---
 
 ### Add Hostname to /etc/hosts
 
-Before accessing via Ingress, add `library-consumer.local` to your hosts file so your Mac resolves it to the Minikube IP:
+Before accessing via Ingress, add `library-consumer.local` to your hosts file so your machine resolves it to the Minikube IP:
 
+**Mac/Linux:**
 ```shell
 echo "$(minikube ip)  library-consumer.local" | sudo tee -a /etc/hosts
+```
+
+**Windows (PowerShell as Administrator):**
+```powershell
+Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "$(minikube ip)  library-consumer.local"
 ```
 
 ---
