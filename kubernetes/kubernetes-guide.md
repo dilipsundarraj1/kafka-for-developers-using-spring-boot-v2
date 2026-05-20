@@ -2523,8 +2523,25 @@ kubectl apply -f library-events-producer-deployment-v4.yaml
 **Watch probe status on a Pod:**
 
 ```shell
+**Watch liveness probe status:**
+
+```shell
+# See liveness probe config and recent failures in the Events section
 kubectl describe pod <pod-name>
-# Look for the "Liveness" and "Readiness" lines and the Events section at the bottom
+
+# Watch for liveness probe failures and container restarts in real time
+kubectl get pods --watch
+
+# Check restart count — a rising RESTARTS count indicates liveness probe failures
+kubectl get pods
+# NAME                                        READY   STATUS    RESTARTS   AGE
+# library-events-producer-6b7d9f8c4d-xk9p2   1/1     Running   3          10m
+
+# See cluster-level liveness failure events
+kubectl get events --field-selector reason=Unhealthy
+
+# Watch all cluster events in real time (shows probe failures, restarts, scheduling)
+kubectl get events --watch
 ```
 
 ---
