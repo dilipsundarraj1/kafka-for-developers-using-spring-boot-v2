@@ -1,0 +1,86 @@
+# =============================================================================
+# Deployment v4 — ConfigMap + Secret (volume mount)
+#
+# What changed from v3:
+#   v3 injected the Secret as an environment variable using secretKeyRef.
+#   v4 removes the env/secretKeyRef entirely and instead mounts the Secret as
+#   a directory inside the container. Each Secret key becomes a file:
+#     /etc/secrets/SPRING_DATASOURCE_PASSWORD  ← file content is the secret value
+#
+# Why use v4 over v3:
+#   - Supports live rotation: when the Secret is updated in etcd, Kubernetes
+#     automatically refreshes the mounted files — no Pod restart required.
+#     Env vars (v2/v3) are set at Pod start and never updated.
+#   - Required for TLS certificates and private keys, which must be files.
+#   - Useful when the application reads config from files rather than env vars.
+#
+# Volume mount mechanism:
+#   spec.volumes:
+#     - name: secret-volume
+#       secret:
+#         secretName: library-events-consumer-secret  ← Secret object in etcd
+#   containers[].volumeMounts:
+#     - name: secret-volume
+#       mountPath: /etc/secrets   ← kubelet writes one file per Secret key here
+#       readOnly: true
+#
+# Note: Spring Boot does not read env vars from mounted files automatically.
+#   Wire the property explicitly in application.properties:
+#     spring.datasource.password=${file:/etc/secrets/SPRING_DATASOURCE_PASSWORD}
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: library-events-consumer
+  labels:
+    app: library-events-consumer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: library-events-consumer
+  template:
+    metadata:
+      labels:
+        app: library-events-consumer
+    spec:
+      volumes:
+        - name: secret-volume                          # volume backed by the Secret
+          secret:
+            secretName: library-events-consumer-secret # Secret object to mount
+      containers:
+        - name: library-events-consumer
+          image: dilipthelip/library-events-consumer:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: library-events-consumer-config   # all keys from ConfigMap become env vars
+          volumeMounts:
+            - name: secret-volume
+              mountPath: /etc/secrets                  # each Secret key becomes a file here
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

@@ -96,6 +96,11 @@
       * [Secret manifest](#secret-manifest)
       * [Apply the Secret](#apply-the-secret)
       * [Deployment v2 — ConfigMap + Secret](#deployment-v2--configmap--secret)
+      * [Secret Options — All Ways to Create a Secret](#secret-options--all-ways-to-create-a-secret)
+      * [Secret Reference Options — All Ways to Reference a Secret](#secret-reference-options--all-ways-to-reference-a-secret)
+        * [Option A — envFrom secretRef (v2, current)](#option-a--envfrom-secretref-v2-current)
+        * [Option B — env valueFrom secretKeyRef (v3)](#option-b--env-valuefrom-secretkeyref-v3)
+        * [Option C — Volume Mount (v4)](#option-c--volume-mount-v4)
     * [Apply — Step by Step](#apply--step-by-step)
 <!-- TOC -->
 
@@ -3003,6 +3008,298 @@ spec:
 | `SPRING_DATASOURCE_PASSWORD` | Not injected | Injected from Secret via `secretRef` |
 | `envFrom` sources | ConfigMap only | ConfigMap + Secret |
 | Sensitive data in manifest | N/A | Kept out — password lives only in the Secret |
+
+---
+
+#### Secret Options — All Ways to Create a Secret
+
+There are two ways to create a Kubernetes Secret using a YAML manifest. They both produce the same object in the cluster — the difference is whether you encode the value yourself.
+
+| Option | How | Best for |
+|---|---|---|
+| YAML `stringData` | Plain text in manifest; k8s encodes automatically | Learning, dev environments |
+| YAML `data` | You base64-encode the value manually | When values come pre-encoded |
+
+---
+
+**Option 1 — YAML with `stringData` (current)**
+
+Plain text — Kubernetes base64-encodes the value before storing it in etcd.
+
+```yaml
+# library-events-consumer-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: library-events-consumer-secret
+  namespace: default
+type: Opaque
+stringData:
+  SPRING_DATASOURCE_PASSWORD: "secret"
+```
+
+```shell
+kubectl apply -f library-events-consumer-secret.yaml
+```
+
+---
+
+**Option 2 — YAML with `data` (pre-encoded)**
+
+You encode the value yourself with `base64` first. Use when your pipeline delivers already-encoded values.
+
+```shell
+# Encode (no trailing newline — the -n flag is important)
+echo -n "secret" | base64
+# c2VjcmV0
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: library-events-consumer-secret
+  namespace: default
+type: Opaque
+data:
+  SPRING_DATASOURCE_PASSWORD: c2VjcmV0   # base64 of "secret"
+```
+
+```shell
+kubectl apply -f library-events-consumer-secret.yaml
+```
+
+> Never mix `stringData` and `data` for the same key — if both are present, `stringData` takes precedence.
+
+---
+
+#### Secret Reference Options — All Ways to Reference a Secret
+
+Once the Secret exists in the cluster, there are three ways a Deployment can consume it.
+
+| Option | Mechanism | Result inside container |
+|---|---|---|
+| A — `envFrom.secretRef` | All keys injected at once | Env vars (bulk) |
+| B — `env.valueFrom.secretKeyRef` | Individual key injection | Env var (selective) |
+| C — Volume mount | Secret mounted as files | Files under a directory |
+
+---
+
+##### Option A — envFrom secretRef (v2, current)
+
+Every key in the Secret becomes an environment variable. Simplest approach — no need to list keys explicitly.
+
+```yaml
+# library-events-consumer-deployment-v2.yaml
+envFrom:
+  - configMapRef:
+      name: library-events-consumer-config
+  - secretRef:
+      name: library-events-consumer-secret   # ALL keys injected as env vars
+```
+
+```shell
+kubectl apply -f library-events-consumer-deployment-v2.yaml
+```
+
+**When to use:** You want every key from the Secret as an env var with no renaming.
+
+---
+
+##### Option B — env valueFrom secretKeyRef (v3)
+
+Reference individual Secret keys by name. You control exactly which keys are injected and can rename them.
+
+```yaml
+# library-events-consumer-deployment-v3.yaml
+envFrom:
+  - configMapRef:
+      name: library-events-consumer-config
+env:
+  - name: SPRING_DATASOURCE_PASSWORD         # env var name inside the container
+    valueFrom:
+      secretKeyRef:
+        name: library-events-consumer-secret  # Secret object name
+        key: SPRING_DATASOURCE_PASSWORD        # exact key inside the Secret
+```
+
+Full manifest: `manifest_files/library-events-consumer-deployment-v3.yaml`
+
+```shell
+kubectl apply -f library-events-consumer-deployment-v3.yaml
+```
+
+**When to use:**
+- You only need a subset of Secret keys
+- You need to rename a key (e.g. `key: DB_PASS` → `name: SPRING_DATASOURCE_PASSWORD`)
+- You want to be explicit about what gets injected
+
+---
+
+##### Option C — Volume Mount (v4)
+
+Instead of injecting the Secret as an environment variable, Kubernetes mounts it as a directory inside the container. Each key in the Secret becomes a **file** — the filename is the key name, the file content is the decoded value.
+
+```
+/etc/secrets/
+  SPRING_DATASOURCE_PASSWORD   ← file whose content is "secret"
+```
+
+---
+
+**Step 1 — Create the Secret**
+
+The Secret manifest is identical to the one used in Options A and B. No changes needed.
+
+```yaml
+# library-events-consumer-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: library-events-consumer-secret
+  namespace: default
+  labels:
+    app: library-events-consumer
+type: Opaque
+stringData:
+  SPRING_DATASOURCE_PASSWORD: "secret"   # plain text; Kubernetes base64-encodes it
+```
+
+```shell
+kubectl apply -f library-events-consumer-secret.yaml
+```
+
+Verify the Secret exists:
+
+```shell
+kubectl get secret library-events-consumer-secret
+```
+
+> `kubectl apply` does **not** create a file on disk. It creates a Secret **object stored in the Kubernetes API server (etcd)**. The file inside the container is created later, automatically, when the Pod starts — see the flow below.
+
+---
+
+**How `kubectl apply` connects to the file inside the container**
+
+```
+kubectl apply -f secret.yaml
+        │
+        ▼
+  Secret object stored in etcd
+  (name: library-events-consumer-secret)
+        │
+        │   kubectl apply -f deployment-v4.yaml
+        ▼
+  Deployment spec tells Kubernetes:
+  "mount the Secret named library-events-consumer-secret
+   at /etc/secrets inside the container"
+        │
+        │   Pod is scheduled on a node
+        ▼
+  kubelet on that node:
+  1. Reads the Secret value from the API server
+  2. Creates a tmpfs (in-memory) volume
+  3. Writes each Secret key as a file into that volume
+  4. Mounts the volume into the container at /etc/secrets
+        │
+        ▼
+  Container sees:
+  /etc/secrets/SPRING_DATASOURCE_PASSWORD  ← content: "secret"
+```
+
+The **bridge** between the Secret object and the file is this part of the Deployment:
+
+```yaml
+volumes:
+  - name: secret-volume
+    secret:
+      secretName: library-events-consumer-secret  # looks up THIS object in etcd
+containers:
+  - volumeMounts:
+      - name: secret-volume
+        mountPath: /etc/secrets                   # kubelet writes the files here
+```
+
+Key points:
+- The Secret lives in etcd, not on any node's disk
+- The kubelet materialises it as files when the Pod starts
+- If you update the Secret (`kubectl apply` with a new value), Kubernetes automatically updates the mounted files — **no Pod restart needed** (this is the live-rotation advantage over env vars)
+
+---
+
+**Step 2 — Mount the Secret as a volume in the Deployment**
+
+Add a `volumes` entry at the `spec` level and a `volumeMounts` entry inside the container. The Secret does **not** appear in `envFrom` or `env` — it is read from the filesystem instead.
+
+```yaml
+# library-events-consumer-deployment-v4.yaml
+spec:
+  volumes:
+    - name: secret-volume              # arbitrary name — must match volumeMounts.name below
+      secret:
+        secretName: library-events-consumer-secret   # the Secret object to mount
+  containers:
+    - name: library-events-consumer
+      envFrom:
+        - configMapRef:
+            name: library-events-consumer-config     # ConfigMap still injected as env vars
+      volumeMounts:
+        - name: secret-volume          # must match volumes.name above
+          mountPath: /etc/secrets      # directory created inside the container
+          readOnly: true               # prevent the app from modifying the files
+```
+
+Full manifest: `manifest_files/library-events-consumer-deployment-v4.yaml`
+
+```shell
+kubectl apply -f library-events-consumer-deployment-v4.yaml
+```
+
+---
+
+**Step 3 — Verify the file is present inside the container**
+
+```shell
+# Get a running pod name
+kubectl get pods -l app=library-events-consumer
+
+# Open a shell and inspect the mounted file
+kubectl exec -it <pod-name> -- cat /etc/secrets/SPRING_DATASOURCE_PASSWORD
+# Expected output: secret
+```
+
+---
+
+**Step 4 — Configure Spring Boot to read from the file**
+
+Spring Boot does not read env vars from mounted files automatically. Wire the property explicitly:
+
+```properties
+# application.properties
+spring.datasource.password=${file:/etc/secrets/SPRING_DATASOURCE_PASSWORD}
+```
+
+Or use Spring Cloud Kubernetes which auto-discovers mounted Secrets as property sources.
+
+---
+
+**When to use:**
+- TLS certificates and private keys (always file-based)
+- Apps that read config from files rather than env vars
+- Secrets that need to rotate without restarting the pod (Kubernetes updates mounted files live; env vars do not)
+
+---
+
+**Comparison — v2 vs v3 vs v4:**
+
+| | v2 (`envFrom`) | v3 (`secretKeyRef`) | v4 (volume) |
+|---|---|---|---|
+| Injection mechanism | All keys → env vars | Selected keys → env vars | Keys → files on disk |
+| Key renaming | Not possible | Yes | Not applicable |
+| Auto-rotation without restart | No | No | Yes (files update live) |
+| TLS / certificate support | No | No | Yes |
+| Spring Boot config | Works out of the box | Works out of the box | Needs `file:` property binding |
+| Complexity | Low | Low | Medium |
 
 ---
 

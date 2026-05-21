@@ -1,0 +1,75 @@
+# =============================================================================
+# Deployment v3 — ConfigMap + Secret (individual key reference)
+#
+# What changed from v2:
+#   v2 used `envFrom.secretRef` which bulk-injects ALL keys from the Secret as
+#   env vars. v3 replaces that with `env[].valueFrom.secretKeyRef`, which
+#   references a single named key from the Secret.
+#
+# Why use v3 over v2:
+#   - Inject only the specific keys you need (not the entire Secret)
+#   - Rename a Secret key to a different env var name inside the container
+#   - Make it explicit in the manifest exactly which sensitive values are injected
+#
+# Secret reference mechanism:
+#   env:
+#     - name: SPRING_DATASOURCE_PASSWORD      ← env var name inside the container
+#       valueFrom:
+#         secretKeyRef:
+#           name: library-events-consumer-secret   ← Secret object in etcd
+#           key: SPRING_DATASOURCE_PASSWORD         ← key inside that Secret
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: library-events-consumer
+  labels:
+    app: library-events-consumer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: library-events-consumer
+  template:
+    metadata:
+      labels:
+        app: library-events-consumer
+    spec:
+      containers:
+        - name: library-events-consumer
+          image: dilipthelip/library-events-consumer:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: library-events-consumer-config   # all keys from ConfigMap become env vars
+          env:
+            - name: SPRING_DATASOURCE_PASSWORD         # env var name inside the container
+              valueFrom:
+                secretKeyRef:
+                  name: library-events-consumer-secret  # Secret object name
+                  key: SPRING_DATASOURCE_PASSWORD        # exact key inside the Secret
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
