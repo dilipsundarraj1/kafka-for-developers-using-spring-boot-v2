@@ -1,6 +1,6 @@
 plugins {
-	id 'org.springframework.boot' version '4.0.2'
-	id 'io.spring.dependency-management' version '1.1.7'
+	id 'org.springframework.boot' version '3.0.5'
+	id 'io.spring.dependency-management' version '1.1.0'
 	id 'java'
 }
 
@@ -8,6 +8,11 @@ group = 'com.learnkafka'
 version = '0.0.1-SNAPSHOT'
 sourceCompatibility = '17'
 
+configurations {
+	compileOnly {
+		extendsFrom annotationProcessor
+	}
+}
 
 repositories {
 	mavenCentral()
@@ -15,20 +20,14 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
-	implementation 'org.springframework.boot:spring-boot-starter-json'
-	implementation 'org.springframework.boot:spring-boot-starter-kafka'
+	implementation 'org.springframework.kafka:spring-kafka'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 
-	// Docker Compose support for local dev and integration tests
-	developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
-	testImplementation 'org.springframework.boot:spring-boot-docker-compose'
-
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation('org.springframework.boot:spring-boot-starter-test') {
 		exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
 	}
-	testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
-	testImplementation 'org.springframework.boot:spring-boot-resttestclient'
-	testRuntimeOnly 'org.springframework.boot:spring-boot-restclient'
 	testImplementation 'org.springframework.kafka:spring-kafka-test'
 }
 

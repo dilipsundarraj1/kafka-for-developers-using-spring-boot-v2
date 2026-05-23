@@ -1,6 +1,7 @@
 package com.learnkafka.controller;
 
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.util.TestUtil;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -12,9 +13,8 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.boot.resttestclient.TestRestTemplate;
-import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.*;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -29,24 +29,23 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureTestRestTemplate
 @ExtendWith(MockitoExtension.class)
 public class LibraryEventsControllerIntegrationTestApproach2 {
 
     @Autowired
     TestRestTemplate restTemplate;
 
-    @MockitoBean
+    @MockBean
     KafkaTemplate<Integer, String > kafkaTemplate;
 
-    @MockitoBean
+    @MockBean
     KafkaAdmin kafkaAdmin;
 
     @Autowired
     ObjectMapper objectMapper;
 
     @Test
-    void postLibraryEvent() {
+    void postLibraryEvent() throws JsonProcessingException {
 
 
         LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
@@ -69,7 +68,7 @@ public class LibraryEventsControllerIntegrationTestApproach2 {
 
 
     @Test
-    void putLibraryEvent() {
+    void putLibraryEvent() throws JsonProcessingException {
         //given
         var libraryEventUpdate = TestUtil.libraryEventRecordUpdate();
 

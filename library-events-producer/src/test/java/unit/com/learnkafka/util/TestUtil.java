@@ -1,7 +1,7 @@
 package com.learnkafka.util;
 
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learnkafka.domain.Book;
 import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.domain.LibraryEventType;
@@ -62,7 +62,7 @@ public class TestUtil {
 
         try {
             return  objectMapper.readValue(json, LibraryEvent.class);
-        } catch (JacksonException e) {
+        } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
 

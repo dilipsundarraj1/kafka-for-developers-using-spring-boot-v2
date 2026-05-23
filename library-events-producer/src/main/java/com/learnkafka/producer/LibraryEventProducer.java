@@ -1,10 +1,10 @@
 package com.learnkafka.producer;
 
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learnkafka.domain.LibraryEvent;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,9 +19,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 @Component
+@Slf4j
 public class LibraryEventProducer {
-
-    private static final Logger log = LoggerFactory.getLogger(LibraryEventProducer.class);
 
     KafkaTemplate<Integer, String> kafkaTemplate;
     ObjectMapper objectMapper;
@@ -34,7 +33,7 @@ public class LibraryEventProducer {
         this.objectMapper = objectMapper;
     }
 
-    public CompletableFuture<SendResult<Integer, String>> sendLibraryEvent(LibraryEvent libraryEvent) {
+    public CompletableFuture<SendResult<Integer, String>> sendLibraryEvent(LibraryEvent libraryEvent) throws JsonProcessingException {
 
         Integer key = libraryEvent.libraryEventId();
         String value = objectMapper.writeValueAsString(libraryEvent);
@@ -51,7 +50,7 @@ public class LibraryEventProducer {
                 });
     }
 
-    public CompletableFuture<SendResult<Integer, String>> sendLibraryEvent_Approach2(LibraryEvent libraryEvent) {
+    public CompletableFuture<SendResult<Integer, String>> sendLibraryEvent_Approach2(LibraryEvent libraryEvent) throws JsonProcessingException {
 
         Integer key = libraryEvent.libraryEventId();
         String value = objectMapper.writeValueAsString(libraryEvent);
@@ -78,7 +77,7 @@ public class LibraryEventProducer {
     }
 
 
-    public SendResult<Integer, String> sendLibraryEventSynchronous(LibraryEvent libraryEvent) throws ExecutionException, InterruptedException, TimeoutException {
+    public SendResult<Integer, String> sendLibraryEventSynchronous(LibraryEvent libraryEvent) throws JsonProcessingException, ExecutionException, InterruptedException, TimeoutException {
 
         Integer key = libraryEvent.libraryEventId();
         String value = objectMapper.writeValueAsString(libraryEvent);
