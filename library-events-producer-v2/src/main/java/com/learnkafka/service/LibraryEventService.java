@@ -45,8 +45,8 @@ public class LibraryEventService {
                 libraryEvent.book() != null ? libraryEvent.book().bookId() : null);
 
         return libraryEventProducer
-               // .sendLibraryEvent(libraryEvent)
-                .sendLibraryEventWithTransactionalAnnotation(libraryEvent)
+                //.sendLibraryEvent(libraryEvent)
+                .sendLibraryEventsInSingleTransactionAsync(libraryEvent)
                 .thenApply(_ -> libraryEvent)
                 .exceptionally(ex -> {
                     throw new LibraryEventPublishException(
@@ -81,7 +81,7 @@ public class LibraryEventService {
         //                 (whenComplete already logged the failure at the transport layer.)
         return libraryEventProducer
                 //.sendLibraryEvent(libraryEvent)
-                .sendLibraryEventTransactionalAsync(libraryEvent)
+                .sendLibraryEventTransactional(libraryEvent)
                 .thenApply(_ -> libraryEvent)
                 .exceptionally(ex -> {
                     throw new LibraryEventPublishException(

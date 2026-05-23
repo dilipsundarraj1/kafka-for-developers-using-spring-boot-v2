@@ -5,6 +5,6 @@ spring:
     producer:
       acks: all
       retries: 15
+      transaction-id-prefix: lib-events-tx-stage-
       properties:
         retry.backoff.ms: 2000
-

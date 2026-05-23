@@ -17,7 +17,8 @@ public class KafkaReadinessHealthIndicator implements HealthIndicator {
 
     private final String bootstrapServers;
 
-    public KafkaReadinessHealthIndicator(@Value("${spring.kafka.bootstrap-servers}") String bootstrapServers) {
+    public KafkaReadinessHealthIndicator(
+            @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers) {
         this.bootstrapServers = bootstrapServers;
     }
 
@@ -27,7 +28,8 @@ public class KafkaReadinessHealthIndicator implements HealthIndicator {
         config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, (int) Duration.ofSeconds(2).toMillis());
         config.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) Duration.ofSeconds(2).toMillis());
-        config.put(AdminClientConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG, Duration.ofSeconds(1).toMillis());
+        config.put(AdminClientConfig.SOCKET_CONNECTION_SETUP_TIMEOUT_MS_CONFIG,
+                Duration.ofSeconds(1).toMillis());
 
         try (AdminClient adminClient = AdminClient.create(config)) {
             int brokerCount = adminClient.describeCluster().nodes().get(2, TimeUnit.SECONDS).size();
@@ -48,4 +50,3 @@ public class KafkaReadinessHealthIndicator implements HealthIndicator {
         }
     }
 }
-

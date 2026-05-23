@@ -18,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.List;
 
 /**
  * Publishes {@link LibraryEvent} messages to a Kafka topic.
@@ -31,20 +32,21 @@ import java.util.concurrent.TimeoutException;
  * The returned {@link CompletableFuture} can be blocked on by the
  * caller when a synchronous guarantee is required.
  *
- * <p><b>Serializer mode (JacksonJsonSerializer — active):</b>
+ * <p><b>Serializer mode (JsonSerializer — active):</b>
  * {@code KafkaTemplate} serializes {@code LibraryEvent} automatically via Jackson's
- * {@code JacksonJsonSerializer}. To switch to {@code StringSerializer}, see the commented
+ * {@code JsonSerializer}. To switch to {@code StringSerializer}, see the commented
  * code in this class and toggle {@code application.yml}.
  */
 @Component
 public class LibraryEventProducer {
 
     private static final Logger log = LoggerFactory.getLogger(LibraryEventProducer.class);
+    private static final String TRANSACTION_BOOK_NAME = "transaction";
 
     @Value("${spring.kafka.topic}")
     private String topic;
 
-    // JacksonJsonSerializer mode: KafkaTemplate carries the LibraryEvent object directly
+    // JsonSerializer mode: KafkaTemplate carries the LibraryEvent object directly
     private final KafkaTemplate<Long, LibraryEvent> kafkaTemplate;
     // StringSerializer mode (switch): swap the line above with the one below
     // private final KafkaTemplate<Long, String> kafkaTemplate;
@@ -135,222 +137,161 @@ public class LibraryEventProducer {
         } catch (TimeoutException ex) {
             log.error("Timed out while publishing LibraryEvent synchronously | topic={}, key={}", topic, key);
             throw new LibraryEventPublishException("Timed out while publishing LibraryEvent synchronously", ex);
+        } catch (Exception e) {
+            log.error("Unexpected error while publishing LibraryEvent synchronously | topic={}, key={}, error={}",
+                    topic, key, e.getMessage(), e);
+                throw new RuntimeException(e);
         }
     }
 
     /**
-     * Publishes {@code libraryEvent} asynchronously inside a Spring-managed Kafka transaction.
+     * Publishes {@code libraryEvent} to the configured Kafka topic within a transactional context.
      *
-     * <p>This method mirrors {@link #sendLibraryEvent(LibraryEvent)} behavior but uses
-     * {@link Transactional} instead of {@code executeInTransaction(...)}.
+     * <p>This method is annotated with {@code @Transactional} to ensure that the Kafka message
+     * is sent as part of a managed transaction. If the transaction is rolled back, the message
+     * will not be sent to the broker. This provides transactional guarantees for distributed
+     * operations involving Kafka and other transactional resources.
+     *
+     * @param libraryEvent the event to publish; its {@code libraryEventId} is used as the message key
+     * @return a {@link CompletableFuture} that completes with the send result or
+     *         exceptionally with a {@link LibraryEventPublishException}
      */
-    @Transactional("kafkaTransactionManager")
-    public CompletableFuture<SendResult<Long, LibraryEvent>> sendLibraryEventWithTransactionalAnnotation(
-            LibraryEvent libraryEvent) {
+    @Transactional
+    public CompletableFuture<SendResult<Long, LibraryEvent>> sendLibraryEventTransactional(LibraryEvent libraryEvent) {
         Long key = libraryEvent.libraryEventId();
 
-        log.info("Sending LibraryEvent with @Transactional (async) to topic={}, key={}, eventType={}",
-                topic, key, libraryEvent.eventType());
-
-        if (isAbortSimulationBook(libraryEvent)) {
-            CompletableFuture<SendResult<Long, LibraryEvent>> first = kafkaTemplate.send(topic, key, libraryEvent);
-            CompletableFuture<SendResult<Long, LibraryEvent>> second = kafkaTemplate.send(topic, key, libraryEvent);
-            CompletableFuture<SendResult<Long, LibraryEvent>> third = kafkaTemplate.send(topic, key, libraryEvent);
-
-            CompletableFuture.allOf(first, second, third).join();
-            throw new LibraryEventPublishException(
-                    "Simulated transaction abort after publishing 3 duplicate events for bookName=transaction",
-                    new IllegalStateException("Simulated abort trigger"));
+        if (isTransactionBook(libraryEvent)) {
+            log.info("Transaction scenario detected for key={}; sending same event 3 times before forcing failure", key);
+            for (int i = 1; i <= 3; i++) {
+                kafkaTemplate.send(topic, key, libraryEvent);
+                log.info("Transaction scenario send attempt {} completed for key={}", i, key);
+            }
+//            throw new RuntimeException(
+//                    "Forced rollback after publishing the same LibraryEvent 3 times for transaction scenario");
         }
+
+        log.info("Sending LibraryEvent transactionally to topic={}, key={}, eventType={}", topic, key, libraryEvent.eventType());
 
         CompletableFuture<SendResult<Long, LibraryEvent>> future = kafkaTemplate.send(topic, key, libraryEvent);
 
         return future.whenComplete((result, ex) -> {
             if (ex != null) {
-                log.error("Failed to publish LibraryEvent with @Transactional (async) | topic={}, key={}, error={}",
+                log.error("Failed to publish LibraryEvent transactionally | topic={}, key={}, error={}",
                         topic, key, ex.getMessage(), ex);
             } else {
                 var metadata = result.getRecordMetadata();
-                log.info("Published LibraryEvent with @Transactional (async) | topic={}, partition={}, offset={}, key={}",
+                log.info("Published LibraryEvent transactionally | topic={}, partition={}, offset={}, key={}",
                         metadata.topic(), metadata.partition(), metadata.offset(), key);
             }
         });
     }
 
     /**
-     * Publishes {@code libraryEvent} synchronously inside a Spring-managed Kafka transaction.
+     * Publishes {@code libraryEvent} to the configured Kafka topic <em>synchronously</em> within a transactional context.
+     *
+     * <p>This method is annotated with {@code @Transactional} and combines the benefits of
+     * synchronous send confirmation with transaction management. The calling thread will block
+     * until the broker acknowledgement is received or a timeout/error occurs, all within the
+     * context of a managed transaction.
+     *
+     * @param libraryEvent the event to publish; its {@code libraryEventId} is used as the message key
+     * @return the {@link SendResult} containing broker metadata for the published record
+     * @throws LibraryEventPublishException if the send fails, times out, or the thread is interrupted
      */
-    @Transactional("kafkaTransactionManager")
-    public SendResult<Long, LibraryEvent> sendLibraryEventSynchronousWithTransactionalAnnotation(
-            LibraryEvent libraryEvent) {
+    @Transactional
+    public SendResult<Long, LibraryEvent> sendLibraryEventSynchronousTransactional(LibraryEvent libraryEvent) {
         Long key = libraryEvent.libraryEventId();
 
-        log.info("Sending LibraryEvent with @Transactional (sync) to topic={}, key={}, eventType={}",
-                topic, key, libraryEvent.eventType());
-
-        if (isAbortSimulationBook(libraryEvent)) {
+        if (isTransactionBook(libraryEvent)) {
+            log.info("Transaction scenario detected for key={}; sending same event 3 times synchronously before forcing failure", key);
             try {
-                kafkaTemplate.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
-                kafkaTemplate.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
-                kafkaTemplate.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
-                throw new LibraryEventPublishException(
-                        "Simulated transaction abort after publishing 3 duplicate events for bookName=transaction",
-                        new IllegalStateException("Simulated abort trigger"));
+                for (int i = 1; i <= 3; i++) {
+                    kafkaTemplate.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
+                    log.info("Transaction scenario synchronous send attempt {} completed for key={}", i, key);
+                }
             } catch (ExecutionException ex) {
-                throw new LibraryEventPublishException("Failed during simulated transaction abort sequence", ex);
+                throw new LibraryEventPublishException("Failed during transaction scenario synchronous publish", ex);
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
-                throw new LibraryEventPublishException("Interrupted during simulated transaction abort sequence", ex);
+                throw new LibraryEventPublishException("Interrupted during transaction scenario synchronous publish", ex);
             } catch (TimeoutException ex) {
-                throw new LibraryEventPublishException("Timed out during simulated transaction abort sequence", ex);
+                throw new LibraryEventPublishException("Timed out during transaction scenario synchronous publish", ex);
             }
+
+            throw new RuntimeException(
+                    "Forced rollback after publishing the same LibraryEvent 3 times for transaction scenario");
         }
+
+        log.info("Sending LibraryEvent synchronously and transactionally to topic={}, key={}, eventType={}",
+                topic, key, libraryEvent.eventType());
 
         try {
             SendResult<Long, LibraryEvent> result = kafkaTemplate.send(topic, key, libraryEvent)
                     .get(3, TimeUnit.SECONDS);
 
             var metadata = result.getRecordMetadata();
-            log.info("Published LibraryEvent with @Transactional (sync) | topic={}, partition={}, offset={}, key={}",
+            log.info("Published LibraryEvent synchronously and transactionally | topic={}, partition={}, offset={}, key={}",
                     metadata.topic(), metadata.partition(), metadata.offset(), key);
 
             return result;
         } catch (ExecutionException ex) {
-            log.error("Failed to publish LibraryEvent with @Transactional (sync) | topic={}, key={}, error={}",
+            log.error("Failed to publish LibraryEvent synchronously and transactionally | topic={}, key={}, error={}",
                     topic, key, ex.getMessage(), ex);
-            throw new LibraryEventPublishException("Failed to publish LibraryEvent with @Transactional (sync)", ex);
+            throw new LibraryEventPublishException("Failed to publish LibraryEvent synchronously and transactionally", ex);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            log.error("Interrupted while publishing LibraryEvent with @Transactional (sync) | topic={}, key={}", topic, key);
-            throw new LibraryEventPublishException("Interrupted while publishing LibraryEvent with @Transactional (sync)", ex);
+            log.error("Interrupted while publishing LibraryEvent synchronously and transactionally | topic={}, key={}", topic, key);
+            throw new LibraryEventPublishException("Interrupted while publishing LibraryEvent synchronously and transactionally", ex);
         } catch (TimeoutException ex) {
-            log.error("Timed out while publishing LibraryEvent with @Transactional (sync) | topic={}, key={}", topic, key);
-            throw new LibraryEventPublishException("Timed out while publishing LibraryEvent with @Transactional (sync)", ex);
+            log.error("Timed out while publishing LibraryEvent synchronously and transactionally | topic={}, key={}", topic, key);
+            throw new LibraryEventPublishException("Timed out while publishing LibraryEvent synchronously and transactionally", ex);
+        } catch (Exception e) {
+            log.error("Unexpected error while publishing LibraryEvent synchronously and transactionally | topic={}, key={}, error={}",
+                    topic, key, e.getMessage(), e);
+                throw new RuntimeException(e);
         }
     }
 
-    /**
-     * Publishes {@code libraryEvent} transactionally using an async send flow.
-     *
-     * <p>This mirrors {@link #sendLibraryEvent(LibraryEvent)} (async callback style),
-     * but executes the send inside {@link KafkaTemplate#executeInTransaction}.
-     *
-     * @param libraryEvent the event to publish transactionally
-     * @return a {@link CompletableFuture} for the send result
-     */
-    public CompletableFuture<SendResult<Long, LibraryEvent>> sendLibraryEventTransactionalAsync(
-            LibraryEvent libraryEvent) {
-        Long key = libraryEvent.libraryEventId();
-
-        log.info("Sending LibraryEvent transactionally (async) to topic={}, key={}, eventType={}",
-                topic, key, libraryEvent.eventType());
-
-        try {
-            return kafkaTemplate.executeInTransaction(operations -> {
-                if (isAbortSimulationBook(libraryEvent)) {
-                    CompletableFuture<SendResult<Long, LibraryEvent>> first = operations.send(topic, key, libraryEvent);
-                    CompletableFuture<SendResult<Long, LibraryEvent>> second = operations.send(topic, key, libraryEvent);
-                    CompletableFuture<SendResult<Long, LibraryEvent>> third = operations.send(topic, key, libraryEvent);
-
-                    CompletableFuture.allOf(first, second, third).join();
-                    throw new LibraryEventPublishException(
-                            "Simulated transaction abort after publishing 3 duplicate events for bookName=transaction",
-                            new IllegalStateException("Simulated abort trigger"));
-                }
-
-                CompletableFuture<SendResult<Long, LibraryEvent>> future = operations.send(topic, key, libraryEvent);
-
-                return future.whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("Failed to publish LibraryEvent transactionally (async) | topic={}, key={}, error={}",
-                                topic, key, ex.getMessage(), ex);
-                    } else {
-                        var metadata = result.getRecordMetadata();
-                        log.info("Published LibraryEvent transactionally (async) | topic={}, partition={}, offset={}, key={}",
-                                metadata.topic(), metadata.partition(), metadata.offset(), key);
-                    }
-                });
-            });
-        } catch (RuntimeException ex) {
-            log.error("Failed to start transactional async publish | topic={}, key={}, error={}",
-                    topic, key, ex.getMessage(), ex);
-            CompletableFuture<SendResult<Long, LibraryEvent>> failed = new CompletableFuture<>();
-            failed.completeExceptionally(new LibraryEventPublishException(
-                    "Failed to publish LibraryEvent transactionally (async)", ex));
-            return failed;
-        }
-    }
-
-    /**
-     * Publishes {@code libraryEvent} to Kafka using a producer transaction.
-     *
-     * <p>This method is intentionally separate from existing send methods.
-     * It wraps the send call in {@link KafkaTemplate#executeInTransaction} so
-     * the record is produced as part of a Kafka transaction boundary.
-     *
-     * @param libraryEvent the event to publish transactionally
-     * @return the broker send result for the published record
-     * @throws LibraryEventPublishException if the transactional send fails
-     */
-    public SendResult<Long, LibraryEvent> sendLibraryEventTransactional(LibraryEvent libraryEvent) {
-        Long key = libraryEvent.libraryEventId();
-
-        log.info("Sending LibraryEvent transactionally to topic={}, key={}, eventType={}",
-                topic, key, libraryEvent.eventType());
-
-        try {
-            return kafkaTemplate.executeInTransaction(operations -> {
-                if (isAbortSimulationBook(libraryEvent)) {
-                    try {
-                        operations.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
-                        operations.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
-                        operations.send(topic, key, libraryEvent).get(3, TimeUnit.SECONDS);
-                        throw new LibraryEventPublishException(
-                                "Simulated transaction abort after publishing 3 duplicate events for bookName=transaction",
-                                new IllegalStateException("Simulated abort trigger"));
-                    } catch (ExecutionException ex) {
-                        throw new LibraryEventPublishException("Failed during simulated transaction abort sequence", ex);
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                        throw new LibraryEventPublishException("Interrupted during simulated transaction abort sequence", ex);
-                    } catch (TimeoutException ex) {
-                        throw new LibraryEventPublishException("Timed out during simulated transaction abort sequence", ex);
-                    }
-                }
-
-                try {
-                    SendResult<Long, LibraryEvent> result = operations.send(topic, key, libraryEvent)
-                            .get(3, TimeUnit.SECONDS);
-
-                    var metadata = result.getRecordMetadata();
-                    log.info("Published LibraryEvent transactionally | topic={}, partition={}, offset={}, key={}",
-                            metadata.topic(), metadata.partition(), metadata.offset(), key);
-
-                    return result;
-                } catch (ExecutionException ex) {
-                    throw new LibraryEventPublishException("Failed to publish LibraryEvent transactionally", ex);
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    throw new LibraryEventPublishException("Interrupted while publishing LibraryEvent transactionally", ex);
-                } catch (TimeoutException ex) {
-                    throw new LibraryEventPublishException("Timed out while publishing LibraryEvent transactionally", ex);
-                }
-            });
-        } catch (RuntimeException ex) {
-            if (ex instanceof LibraryEventPublishException) {
-                throw ex;
-            }
-
-            log.error("Failed to publish LibraryEvent transactionally | topic={}, key={}, error={}",
-                    topic, key, ex.getMessage(), ex);
-            throw new LibraryEventPublishException("Failed to publish LibraryEvent transactionally", ex);
-        }
-    }
-
-    private boolean isAbortSimulationBook(LibraryEvent libraryEvent) {
+    private boolean isTransactionBook(LibraryEvent libraryEvent) {
         return libraryEvent != null
                 && libraryEvent.book() != null
-                && "transaction".equalsIgnoreCase(libraryEvent.book().bookName());
+                && libraryEvent.book().bookName() != null
+                && TRANSACTION_BOOK_NAME.equalsIgnoreCase(libraryEvent.book().bookName().trim());
+    }
+
+
+    /**
+     * Publishes the same event three times in one Kafka transaction asynchronously.
+     *
+     * @param libraryEvent event to publish three times in a single transaction
+     * @return future that completes when the transactional send block finishes
+     */
+    public CompletableFuture<Void> sendLibraryEventsInSingleTransactionAsync(LibraryEvent libraryEvent) {
+        Long key = libraryEvent.libraryEventId();
+        log.info("Sending the same LibraryEvent 3 times asynchronously in a single Kafka transaction | topic={}, key={}, eventType={}",
+                topic, key, libraryEvent.eventType());
+
+        CompletableFuture<Void> future = CompletableFuture.runAsync(() ->
+                kafkaTemplate.executeInTransaction(ops -> {
+                    for (int i = 1; i <= 3; i++) {
+                        ops.send(topic, key, libraryEvent);
+                        log.info("Async transactional send attempt {} completed for key={}", i, key);
+                    }
+                    return null;
+                })
+        );
+
+        return future.whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("Failed to publish LibraryEvent transactionally (async) | topic={}, key={}, error={}",
+                        topic, key, ex.getMessage(), ex);
+            } else {
+                log.info("Published the same LibraryEvent 3 times asynchronously in a single Kafka transaction | topic={}, key={}, completionResult={}",
+                        topic, key, result);
+            }
+        }).exceptionally(ex -> {
+            throw new LibraryEventPublishException("Failed to publish LibraryEvent transactionally (async)", ex);
+        });
     }
 }
 

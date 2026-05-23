@@ -10,6 +10,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -96,6 +97,21 @@ public class LibraryEventsControllerAdvice {
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponse(List.of(ex.getMessage())));
+    }
+
+    // -----------------------------------------------------------------------
+    // Static-resource / favicon 404s
+    // -----------------------------------------------------------------------
+
+    /**
+     * Handles requests for static resources that do not exist (e.g. {@code /favicon.ico}).
+     * Returns a plain 404 without logging an ERROR, so browser-initiated requests do not
+     * pollute the application error log.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Void> handleNoResourceFound(NoResourceFoundException ex) {
+        log.debug("Static resource not found: {}", ex.getMessage());
+        return ResponseEntity.notFound().build();
     }
 
     // -----------------------------------------------------------------------
