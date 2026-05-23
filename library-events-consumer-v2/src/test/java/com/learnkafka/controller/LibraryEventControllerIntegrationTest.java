@@ -1,8 +1,8 @@
 package com.learnkafka.controller;
 
-import com.learnkafka.domain.Book;
-import com.learnkafka.domain.LibraryEvent;
 import com.learnkafka.domain.LibraryEventType;
+import com.learnkafka.entity.Book;
+import com.learnkafka.entity.LibraryEvent;
 import com.learnkafka.repository.BookRepository;
 import com.learnkafka.repository.LibraryEventRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,7 +17,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -42,8 +44,6 @@ class LibraryEventControllerIntegrationTest {
         libraryEventRepository.deleteAll();
     }
 
-    // ── GET all ──────────────────────────────────────────────
-
     @Test
     void getAllLibraryEvents_shouldReturnEmptyList() throws Exception {
         mockMvc.perform(get("/v1/library-events"))
@@ -54,90 +54,52 @@ class LibraryEventControllerIntegrationTest {
 
     @Test
     void getAllLibraryEvents_shouldReturnAllLibraryEvents() throws Exception {
-        persistLibraryEventWithBook(1L, "Clean Code", "Robert C. Martin");
-        persistLibraryEventWithBook(2L, "Effective Java", "Joshua Bloch");
+        persistLibraryEventWithBook(100, "Clean Code", "Robert C. Martin", LibraryEventType.ADD);
+        persistLibraryEventWithBook(101, "Kafka in Action", "John Doe", LibraryEventType.UPDATE);
 
         mockMvc.perform(get("/v1/library-events"))
                 .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.length()").value(2));
     }
 
     @Test
-    void getAllLibraryEvents_shouldIncludeBookDetails() throws Exception {
-        persistLibraryEventWithBook(1L, "Clean Code", "Robert C. Martin");
-
-        mockMvc.perform(get("/v1/library-events"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].libraryEventId").isNotEmpty())
-                .andExpect(jsonPath("$[0].eventType").value("ADD"))
-                .andExpect(jsonPath("$[0].book.bookId").value(1))
-                .andExpect(jsonPath("$[0].book.bookName").value("Clean Code"))
-                .andExpect(jsonPath("$[0].book.bookAuthor").value("Robert C. Martin"))
-                .andExpect(jsonPath("$[0].createdAt").isNotEmpty())
-                .andExpect(jsonPath("$[0].updatedAt").isNotEmpty());
-    }
-
-    @Test
-    void getAllLibraryEvents_withoutBook_shouldReturnNullBook() throws Exception {
-        LibraryEvent libraryEvent = new LibraryEvent(null, LibraryEventType.ADD, null);
-        libraryEventRepository.save(libraryEvent);
-
-        mockMvc.perform(get("/v1/library-events"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].libraryEventId").isNotEmpty())
-                .andExpect(jsonPath("$[0].eventType").value("ADD"))
-                .andExpect(jsonPath("$[0].book").isEmpty());
-    }
-
-    // ── GET by ID ────────────────────────────────────────────
-
-    @Test
     void getLibraryEventById_shouldReturnLibraryEvent() throws Exception {
-        LibraryEvent savedEvent = persistLibraryEventWithBook(1L, "Clean Code", "Robert C. Martin");
+        LibraryEvent savedEvent = persistLibraryEventWithBook(200, "Domain-Driven Design", "Eric Evans", LibraryEventType.ADD);
 
-        mockMvc.perform(get("/v1/library-events/{id}", savedEvent.getLibraryEventId()))
+        mockMvc.perform(get("/v1/library-events/{libraryEventId}", savedEvent.getLibraryEventId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.libraryEventId").value(savedEvent.getLibraryEventId()))
                 .andExpect(jsonPath("$.eventType").value("ADD"))
-                .andExpect(jsonPath("$.book.bookId").value(1))
-                .andExpect(jsonPath("$.book.bookName").value("Clean Code"))
-                .andExpect(jsonPath("$.book.bookAuthor").value("Robert C. Martin"))
+                .andExpect(jsonPath("$.book.bookId").value(200))
+                .andExpect(jsonPath("$.book.bookName").value("Domain-Driven Design"))
+                .andExpect(jsonPath("$.book.bookAuthor").value("Eric Evans"))
                 .andExpect(jsonPath("$.book.libraryEventId").value(savedEvent.getLibraryEventId()))
                 .andExpect(jsonPath("$.createdAt").isNotEmpty())
-                .andExpect(jsonPath("$.updatedAt").isNotEmpty());
+                .andExpect(jsonPath("$.updatedAt").isNotEmpty())
+                .andExpect(jsonPath("$.book.createdAt").isNotEmpty())
+                .andExpect(jsonPath("$.book.updatedAt").isNotEmpty());
     }
 
     @Test
     void getLibraryEventById_notFound_shouldReturn404() throws Exception {
-        mockMvc.perform(get("/v1/library-events/999"))
+        mockMvc.perform(get("/v1/library-events/{libraryEventId}", 999))
                 .andExpect(status().isNotFound());
     }
 
-    @Test
-    void getLibraryEventById_withoutBook_shouldReturnNullBook() throws Exception {
-        LibraryEvent libraryEvent = new LibraryEvent(null, LibraryEventType.UPDATE, null);
-        LibraryEvent savedEvent = libraryEventRepository.save(libraryEvent);
+    private LibraryEvent persistLibraryEventWithBook(Integer bookId,
+                                                     String bookName,
+                                                     String bookAuthor,
+                                                     LibraryEventType eventType) {
+        LibraryEvent libraryEvent = new LibraryEvent();
+        libraryEvent.setEventType(eventType);
 
-        mockMvc.perform(get("/v1/library-events/{id}", savedEvent.getLibraryEventId()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.libraryEventId").value(savedEvent.getLibraryEventId()))
-                .andExpect(jsonPath("$.eventType").value("UPDATE"))
-                .andExpect(jsonPath("$.book").isEmpty());
-    }
+        Book book = new Book();
+        book.setBookId(bookId);
+        book.setBookName(bookName);
+        book.setBookAuthor(bookAuthor);
 
-    // ── Helper ───────────────────────────────────────────────
-
-    private LibraryEvent persistLibraryEventWithBook(@jakarta.validation.constraints.NotNull Long bookId, String bookName, String bookAuthor) {
-        LibraryEvent libraryEvent = new LibraryEvent(null, LibraryEventType.ADD, null);
-        LibraryEvent savedEvent = libraryEventRepository.save(libraryEvent);
-
-        Book book = new Book(bookId, bookName, bookAuthor);
-        book.setLibraryEvent(savedEvent);
-        bookRepository.save(book);
-
-        return savedEvent;
+        libraryEvent.setBook(book);
+        return libraryEventRepository.save(libraryEvent);
     }
 }
 

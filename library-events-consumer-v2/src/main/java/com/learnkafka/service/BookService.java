@@ -1,9 +1,10 @@
 package com.learnkafka.service;
 
-import com.learnkafka.domain.Book;
 import com.learnkafka.dto.BookDto;
 import com.learnkafka.dto.BookResponseDto;
-import com.learnkafka.dto.LibraryEventMapper;
+import com.learnkafka.entity.Book;
+import com.learnkafka.entity.LibraryEvent;
+import com.learnkafka.mapper.LibraryEventMapper;
 import com.learnkafka.repository.BookRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,32 +20,33 @@ public class BookService {
     private static final Logger log = LoggerFactory.getLogger(BookService.class);
 
     private final BookRepository bookRepository;
+    private final LibraryEventMapper libraryEventMapper;
 
-    public BookService(BookRepository bookRepository) {
+    public BookService(BookRepository bookRepository, LibraryEventMapper libraryEventMapper) {
         this.bookRepository = bookRepository;
+        this.libraryEventMapper = libraryEventMapper;
     }
 
     public List<BookResponseDto> findAll() {
         log.info("Fetching all books");
         return bookRepository.findAll()
                 .stream()
-                .map(LibraryEventMapper::toBookResponseDto)
+                .map(libraryEventMapper::toBookResponseDto)
                 .toList();
     }
 
     public Optional<BookResponseDto> findById(Integer bookId) {
         log.info("Fetching book with id: {}", bookId);
         return bookRepository.findById(bookId)
-                .map(LibraryEventMapper::toBookResponseDto);
+                .map(libraryEventMapper::toBookResponseDto);
     }
 
     @Transactional
     public BookResponseDto create(BookDto bookDto) {
         log.info("Creating book: {}", bookDto);
-        Book book = LibraryEventMapper.toBookEntity(bookDto);
-        Book savedBook = bookRepository.save(book);
-        log.info("Successfully created book: {}", savedBook);
-        return LibraryEventMapper.toBookResponseDto(savedBook);
+        Book savedBook = bookRepository.save(libraryEventMapper.toBookEntity(bookDto));
+        log.info("Successfully created book with id: {}", savedBook.getBookId());
+        return libraryEventMapper.toBookResponseDto(savedBook);
     }
 
     @Transactional
@@ -55,8 +57,8 @@ public class BookService {
                     existingBook.setBookName(bookDto.bookName());
                     existingBook.setBookAuthor(bookDto.bookAuthor());
                     Book updatedBook = bookRepository.save(existingBook);
-                    log.info("Successfully updated book: {}", updatedBook);
-                    return LibraryEventMapper.toBookResponseDto(updatedBook);
+                    log.info("Successfully updated book with id: {}", updatedBook.getBookId());
+                    return libraryEventMapper.toBookResponseDto(updatedBook);
                 });
     }
 
@@ -65,10 +67,10 @@ public class BookService {
         log.info("Deleting book with id: {}", bookId);
         return bookRepository.findById(bookId)
                 .map(book -> {
-                    // Break the bidirectional OneToOne reference so that
-                    // LibraryEvent's cascade = ALL does not re-persist the book
-                    if (book.getLibraryEvent() != null) {
-                        book.getLibraryEvent().setBook(null);
+                    LibraryEvent libraryEvent = book.getLibraryEvent();
+                    if (libraryEvent != null) {
+                        libraryEvent.setBook(null);
+                        book.setLibraryEvent(null);
                     }
                     bookRepository.delete(book);
                     log.info("Successfully deleted book with id: {}", bookId);
@@ -77,5 +79,4 @@ public class BookService {
                 .orElse(false);
     }
 }
-
 

@@ -1,5 +1,6 @@
-package com.learnkafka.domain;
+package com.learnkafka.entity;
 
+import com.learnkafka.domain.LibraryEventType;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -11,34 +12,39 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDateTime;
 
 @Entity
+@Table(name = "library_event")
 public class LibraryEvent {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long libraryEventId;
+    @Column(name = "library_event_id")
+    private Integer libraryEventId;
 
-    @Enumerated(EnumType.STRING)
     @NotNull
+    @Enumerated(EnumType.STRING)
+    @Column(name = "event_type", nullable = false)
     private LibraryEventType eventType;
 
-    @OneToOne(mappedBy = "libraryEvent", cascade = {CascadeType.ALL})
+    @OneToOne(mappedBy = "libraryEvent", cascade = CascadeType.ALL)
     private Book book;
 
-    @Column(nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(nullable = false)
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     @PrePersist
     protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        updatedAt = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now();
+        createdAt = now;
+        updatedAt = now;
     }
 
     @PreUpdate
@@ -46,20 +52,11 @@ public class LibraryEvent {
         updatedAt = LocalDateTime.now();
     }
 
-    public LibraryEvent() {
-    }
-
-    public LibraryEvent(Long libraryEventId, LibraryEventType eventType, Book book) {
-        this.libraryEventId = libraryEventId;
-        this.eventType = eventType;
-        this.book = book;
-    }
-
-    public Long getLibraryEventId() {
+    public Integer getLibraryEventId() {
         return libraryEventId;
     }
 
-    public void setLibraryEventId(Long libraryEventId) {
+    public void setLibraryEventId(Integer libraryEventId) {
         this.libraryEventId = libraryEventId;
     }
 
@@ -77,6 +74,9 @@ public class LibraryEvent {
 
     public void setBook(Book book) {
         this.book = book;
+        if (book != null && book.getLibraryEvent() != this) {
+            book.setLibraryEvent(this);
+        }
     }
 
     public LocalDateTime getCreatedAt() {
@@ -94,15 +94,5 @@ public class LibraryEvent {
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
-
-    @Override
-    public String toString() {
-        return "LibraryEvent{" +
-                "libraryEventId=" + libraryEventId +
-                ", eventType=" + eventType +
-                ", book=" + book +
-                ", createdAt=" + createdAt +
-                ", updatedAt=" + updatedAt +
-                '}';
-    }
 }
+

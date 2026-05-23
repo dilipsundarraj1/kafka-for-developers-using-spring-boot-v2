@@ -34,8 +34,7 @@ public class BookController {
     @GetMapping
     public ResponseEntity<List<BookResponseDto>> getAllBooks() {
         log.info("GET /v1/books");
-        List<BookResponseDto> books = bookService.findAll();
-        return ResponseEntity.ok(books);
+        return ResponseEntity.ok(bookService.findAll());
     }
 
     @GetMapping("/{bookId}")
@@ -49,8 +48,8 @@ public class BookController {
     @PostMapping
     public ResponseEntity<BookResponseDto> createBook(@RequestBody @Valid BookDto bookDto) {
         log.info("POST /v1/books - {}", bookDto);
-        BookResponseDto created = bookService.create(bookDto);
-        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(bookService.create(bookDto));
     }
 
     @PutMapping("/{bookId}")

@@ -4,4 +4,3 @@ public enum LibraryEventType {
     ADD,
     UPDATE
 }
-

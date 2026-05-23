@@ -4,14 +4,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 public record BookDto(
-        @NotNull
-        Long bookId,
-
-        @NotBlank
-        String bookName,
-
-        @NotBlank
-        String bookAuthor
+        @NotNull Integer bookId,
+        @NotBlank String bookName,
+        @NotBlank String bookAuthor
 ) {
 }
 

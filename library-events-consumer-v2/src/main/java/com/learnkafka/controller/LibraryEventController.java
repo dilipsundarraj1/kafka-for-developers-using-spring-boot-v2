@@ -27,13 +27,11 @@ public class LibraryEventController {
     @GetMapping
     public ResponseEntity<List<LibraryEventResponseDto>> getAllLibraryEvents() {
         log.info("GET /v1/library-events");
-        List<LibraryEventResponseDto> libraryEvents = libraryEventService.findAll();
-        return ResponseEntity.ok(libraryEvents);
+        return ResponseEntity.ok(libraryEventService.findAll());
     }
 
     @GetMapping("/{libraryEventId}")
-    public ResponseEntity<LibraryEventResponseDto> getLibraryEventById(
-            @PathVariable Long libraryEventId) {
+    public ResponseEntity<LibraryEventResponseDto> getLibraryEventById(@PathVariable Integer libraryEventId) {
         log.info("GET /v1/library-events/{}", libraryEventId);
         return libraryEventService.findById(libraryEventId)
                 .map(ResponseEntity::ok)

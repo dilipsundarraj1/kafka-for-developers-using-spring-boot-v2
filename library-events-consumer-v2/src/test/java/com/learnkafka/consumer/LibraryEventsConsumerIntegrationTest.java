@@ -1,26 +1,29 @@
 package com.learnkafka.consumer;
 
 import com.learnkafka.domain.Book;
-import com.learnkafka.domain.FailureRecord;
-import com.learnkafka.domain.LibraryEvent;
+import com.learnkafka.domain.LibraryEventDTO;
 import com.learnkafka.domain.LibraryEventType;
-import com.learnkafka.dto.BookDto;
-import com.learnkafka.dto.LibraryEventDto;
 import com.learnkafka.repository.BookRepository;
-import com.learnkafka.repository.FailureRecordRepository;
+import com.learnkafka.repository.LibraryEventFailureRepository;
 import com.learnkafka.repository.LibraryEventRepository;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.IntegerDeserializer;
 import org.apache.kafka.common.serialization.IntegerSerializer;
-import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.context.ImportTestcontainers;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.core.env.Environment;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
+import org.springframework.kafka.support.serializer.JsonSerializer;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.context.TestPropertySource;
@@ -29,15 +32,23 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @SpringBootTest
-@EmbeddedKafka(partitions = 1, topics = {"library-events"},
+@EmbeddedKafka(partitions = 1, topics = {"library-events", "library-events.DLT"},
         bootstrapServersProperty = "spring.kafka.consumer.bootstrap-servers")
 @TestPropertySource(properties = {
-        "spring.kafka.consumer.auto-offset-reset=earliest"
+        "spring.kafka.consumer.auto-offset-reset=earliest",
+        "spring.kafka.producer.bootstrap-servers=${spring.kafka.consumer.bootstrap-servers}",
+        "app.kafka.recovery.mode=both"
 })
 @ImportTestcontainers
 class LibraryEventsConsumerIntegrationTest {
@@ -55,192 +66,226 @@ class LibraryEventsConsumerIntegrationTest {
     private BookRepository bookRepository;
 
     @Autowired
-    private FailureRecordRepository failureRecordRepository;
+    private LibraryEventFailureRepository libraryEventFailureRepository;
 
-    private KafkaTemplate<Integer, LibraryEventDto> kafkaTemplate;
-    private KafkaTemplate<Integer, String> malformedPayloadTemplate;
+    @Autowired
+    private Environment environment;
+
+    private KafkaTemplate<Integer, LibraryEventDTO> kafkaTemplate;
 
     @BeforeEach
     void setUp() {
-        failureRecordRepository.deleteAll();
+        libraryEventFailureRepository.deleteAll();
         bookRepository.deleteAll();
         libraryEventRepository.deleteAll();
 
         Map<String, Object> producerProps = new HashMap<>();
         producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, embeddedKafkaBroker.getBrokersAsString());
         producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
-        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JacksonJsonSerializer.class);
+        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
 
-        var producerFactory = new DefaultKafkaProducerFactory<Integer, LibraryEventDto>(producerProps);
+        var producerFactory = new DefaultKafkaProducerFactory<Integer, LibraryEventDTO>(producerProps);
         kafkaTemplate = new KafkaTemplate<>(producerFactory);
-
-        Map<String, Object> malformedProducerProps = new HashMap<>();
-        malformedProducerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, embeddedKafkaBroker.getBrokersAsString());
-        malformedProducerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
-        malformedProducerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        var malformedProducerFactory = new DefaultKafkaProducerFactory<Integer, String>(malformedProducerProps);
-        malformedPayloadTemplate = new KafkaTemplate<>(malformedProducerFactory);
     }
 
     @Test
     void consumeLibraryEvent_ADD_shouldPersistLibraryEventAndBook() throws Exception {
-        // given
-        BookDto bookDto = new BookDto(1L, "Clean Code", "Robert C. Martin");
-        LibraryEventDto libraryEventDto = new LibraryEventDto(null, LibraryEventType.ADD, bookDto);
+        Book book = new Book(100L, "Clean Code", "Robert C. Martin");
+        LibraryEventDTO dto = new LibraryEventDTO(null, LibraryEventType.ADD, book);
 
-        // when — produce to embedded Kafka
-        kafkaTemplate.send("library-events", libraryEventDto).get(10, TimeUnit.SECONDS);
-
-        // then — wait for consumer to process and persist
+        kafkaTemplate.send("library-events", dto).get(10, TimeUnit.SECONDS);
         waitForRecordCount(1, 10);
 
-        List<LibraryEvent> libraryEvents = libraryEventRepository.findAll();
-        assertEquals(1, libraryEvents.size());
+        var events = libraryEventRepository.findAll();
+        var books = bookRepository.findAll();
 
-        LibraryEvent savedEvent = libraryEvents.getFirst();
+        assertEquals(1, events.size());
+        assertEquals(1, books.size());
+
+        var savedEvent = events.getFirst();
+        var savedBook = books.getFirst();
+
         assertNotNull(savedEvent.getLibraryEventId());
         assertEquals(LibraryEventType.ADD, savedEvent.getEventType());
         assertNotNull(savedEvent.getCreatedAt());
         assertNotNull(savedEvent.getUpdatedAt());
 
-        List<Book> books = bookRepository.findAll();
-        assertEquals(1, books.size());
-
-        Book savedBook = books.getFirst();
-        assertEquals(1, savedBook.getBookId());
+        assertEquals(100, savedBook.getBookId());
         assertEquals("Clean Code", savedBook.getBookName());
         assertEquals("Robert C. Martin", savedBook.getBookAuthor());
-        assertNotNull(savedBook.getCreatedAt());
-        assertNotNull(savedBook.getUpdatedAt());
-
-        // Verify FK relationship — Book references LibraryEvent
         assertNotNull(savedBook.getLibraryEvent());
         assertEquals(savedEvent.getLibraryEventId(), savedBook.getLibraryEvent().getLibraryEventId());
+        assertNotNull(savedBook.getCreatedAt());
+        assertNotNull(savedBook.getUpdatedAt());
     }
 
     @Test
-    void consumeLibraryEvent_ADD_multipleMessages_shouldPersistAll() throws Exception {
-        // given
-        BookDto bookDto1 = new BookDto(10L, "Clean Code", "Robert C. Martin");
-        LibraryEventDto dto1 = new LibraryEventDto(null, LibraryEventType.ADD, bookDto1);
-
-        BookDto bookDto2 = new BookDto(20L, "Effective Java", "Joshua Bloch");
-        LibraryEventDto dto2 = new LibraryEventDto(null, LibraryEventType.ADD, bookDto2);
-
-        // when — produce two messages
-        kafkaTemplate.send("library-events", dto1).get(10, TimeUnit.SECONDS);
-        kafkaTemplate.send("library-events", dto2).get(10, TimeUnit.SECONDS);
-
-        // then — both should be consumed and persisted
-        waitForRecordCount(1, 10);
-
-        assertEquals(2, libraryEventRepository.count());
-        assertEquals(2, bookRepository.count());
-
-        assertTrue(bookRepository.findById(10).isPresent());
-        assertEquals("Clean Code", bookRepository.findById(10).get().getBookName());
-
-        assertTrue(bookRepository.findById(20).isPresent());
-        assertEquals("Effective Java", bookRepository.findById(20).get().getBookName());
-    }
-
-    @Test
-    void consumeLibraryEvent_UPDATE_shouldPersistLibraryEvent() throws Exception {
-        // given — first seed an ADD event so we have a valid libraryEventId for UPDATE
-        BookDto initialBookDto = new BookDto(99L, "Design Patterns", "Gang of Four");
-        LibraryEventDto addDto = new LibraryEventDto(null, LibraryEventType.ADD, initialBookDto);
+    void consumeLibraryEvent_UPDATE_shouldUpdateExistingLibraryEventAndBook() throws Exception {
+        Book addBook = new Book(101L, "Kafka Basics", "Alice");
+        LibraryEventDTO addDto = new LibraryEventDTO(null, LibraryEventType.ADD, addBook);
         kafkaTemplate.send("library-events", addDto).get(10, TimeUnit.SECONDS);
+
         waitForRecordCount(1, 10);
+        Integer existingId = libraryEventRepository.findAll().getFirst().getLibraryEventId();
 
-        Long existingLibraryEventId = libraryEventRepository.findAll().getFirst().getLibraryEventId();
-        BookDto updatedBookDto = new BookDto(99L, "Design Patterns", "Gang of Four");
-        LibraryEventDto libraryEventDto = new LibraryEventDto(existingLibraryEventId, LibraryEventType.UPDATE, updatedBookDto);
+        Book updateBook = new Book(101L, "Kafka in Action", "Bob");
+        LibraryEventDTO updateDto = new LibraryEventDTO(existingId.longValue(), LibraryEventType.UPDATE, updateBook);
+        kafkaTemplate.send("library-events", updateDto).get(10, TimeUnit.SECONDS);
 
-        // when
-        kafkaTemplate.send("library-events", libraryEventDto).get(10, TimeUnit.SECONDS);
+        waitForCondition(() -> libraryEventRepository.findById(existingId)
+                        .map(event -> event.getEventType() == LibraryEventType.UPDATE
+                                && event.getBook() != null
+                                && "Kafka in Action".equals(event.getBook().getBookName())
+                                && "Bob".equals(event.getBook().getBookAuthor()))
+                        .orElse(false),
+                10,
+                "Timed out waiting for UPDATE event to be persisted");
 
-        // then
-        waitForRecordCount(1, 10);
-
-        List<LibraryEvent> libraryEvents = libraryEventRepository.findAll();
-        assertEquals(1, libraryEvents.size());
-        assertTrue(libraryEvents.stream().anyMatch(event -> event.getEventType() == LibraryEventType.UPDATE));
-
-        List<Book> books = bookRepository.findAll();
-        assertEquals(1, books.size());
-        assertEquals(99, books.getFirst().getBookId());
-        assertEquals("Design Patterns", books.getFirst().getBookName());
-        assertEquals("Gang of Four", books.getFirst().getBookAuthor());
+        assertEquals(1, libraryEventRepository.count());
+        assertEquals(1, bookRepository.count());
+        assertEquals("Kafka in Action", bookRepository.findById(101).orElseThrow().getBookName());
     }
 
     @Test
-    void consumeLibraryEvent_withKey_shouldPersistSuccessfully() throws Exception {
-        // given — producer sends with a Kafka message key
-        BookDto bookDto = new BookDto(42L, "Refactoring", "Martin Fowler");
-        LibraryEventDto libraryEventDto = new LibraryEventDto(null, LibraryEventType.ADD, bookDto);
+    void consumeLibraryEvent_invalid_withNullBook_shouldNotPersistAnyRecord() throws Exception {
+        LibraryEventDTO invalidDto = new LibraryEventDTO(null, LibraryEventType.ADD, null);
 
-        // when — send with an explicit key
-        kafkaTemplate.send("library-events", 42, libraryEventDto).get(10, TimeUnit.SECONDS);
+        kafkaTemplate.send("library-events", invalidDto).get(10, TimeUnit.SECONDS);
 
-        // then
-        waitForRecordCount(1, 10);
+        assertConditionRemainsTrue(
+                () -> libraryEventRepository.count() == 0 && bookRepository.count() == 0,
+                3,
+                "Unexpected persistence happened for invalid ADD event with null book");
 
-        List<LibraryEvent> libraryEvents = libraryEventRepository.findAll();
-        assertEquals(1, libraryEvents.size());
+        waitForCondition(
+                () -> libraryEventFailureRepository.count() == 1,
+                10,
+                "Timed out waiting for failure-table record for invalid ADD event");
 
-        LibraryEvent savedEvent = libraryEvents.getFirst();
-        assertNotNull(savedEvent.getLibraryEventId());
-        assertEquals(LibraryEventType.ADD, savedEvent.getEventType());
+        var failure = libraryEventFailureRepository.findAll().getFirst();
+        assertEquals("library-events", failure.getTopic());
+        assertNotNull(failure.getStackTrace());
+        assertTrue(failure.getExceptionClass().contains("ListenerExecutionFailedException"));
+        assertTrue(failure.getStackTrace().contains("Validation failed:"));
 
-        Book savedBook = bookRepository.findById(42).orElse(null);
-        assertNotNull(savedBook);
-        assertEquals("Refactoring", savedBook.getBookName());
-        assertEquals("Martin Fowler", savedBook.getBookAuthor());
-        assertEquals(savedEvent.getLibraryEventId(), savedBook.getLibraryEvent().getLibraryEventId());
     }
 
     @Test
-    void consumeLibraryEvent_invalidJson_shouldPersistFailureRecordAndContinue() throws Exception {
-        malformedPayloadTemplate.send("library-events", 123, "Hello").get(10, TimeUnit.SECONDS);
+    void consumeLibraryEvent_UPDATE_withNullLibraryEventId_shouldNotUpdateExistingRecord() throws Exception {
+        Book addBook = new Book(102L, "Refactoring", "Martin Fowler");
+        LibraryEventDTO addDto = new LibraryEventDTO(null, LibraryEventType.ADD, addBook);
+        kafkaTemplate.send("library-events", addDto).get(10, TimeUnit.SECONDS);
 
-        waitForFailureRecordCount(1, 10);
+        waitForRecordCount(1, 10);
+
+        Integer existingId = libraryEventRepository.findAll().getFirst().getLibraryEventId();
+        String originalBookName = bookRepository.findById(102).orElseThrow().getBookName();
+
+        Book invalidUpdateBook = new Book(102L, "Refactoring 2nd Edition", "Martin Fowler");
+        LibraryEventDTO invalidUpdateDto = new LibraryEventDTO(null, LibraryEventType.UPDATE, invalidUpdateBook);
+        kafkaTemplate.send("library-events", invalidUpdateDto).get(10, TimeUnit.SECONDS);
+
+        assertConditionRemainsTrue(
+                () -> libraryEventRepository.count() == 1
+                        && bookRepository.count() == 1
+                        && libraryEventRepository.findById(existingId)
+                        .map(event -> event.getEventType() == LibraryEventType.ADD)
+                        .orElse(false)
+                        && bookRepository.findById(102)
+                        .map(book -> originalBookName.equals(book.getBookName()))
+                        .orElse(false),
+                3,
+                "Invalid UPDATE with null libraryEventId unexpectedly changed persisted data");
+    }
+
+    @Test
+    void consumeLibraryEvent_UPDATE_whenLibraryEventDoesNotExist_shouldRecoverToDltAndFailureTable() throws Exception {
+        assertEquals("both", environment.getProperty("app.kafka.recovery.mode"));
+
+        Book updateBook = new Book(777L, "Missing Event", "No Author");
+        LibraryEventDTO updateDto = new LibraryEventDTO(9999L, LibraryEventType.UPDATE, updateBook);
+
+        kafkaTemplate.send("library-events", updateDto).get(10, TimeUnit.SECONDS);
+
+        waitForCondition(
+                () -> libraryEventFailureRepository.count() == 1,
+                10,
+                "Timed out waiting for failure-table record for missing UPDATE event");
 
         assertEquals(0, libraryEventRepository.count());
         assertEquals(0, bookRepository.count());
 
-        List<FailureRecord> failureRecords = failureRecordRepository.findAll();
-        assertEquals(1, failureRecords.size());
-        FailureRecord failureRecord = failureRecords.getFirst();
-        assertEquals("library-events", failureRecord.getTopic());
-        assertEquals(0, failureRecord.getPartition());
-        assertTrue(failureRecord.getOffsetValue() >= 0L);
-        assertEquals("OPEN", failureRecord.getStatus());
+        var failure = libraryEventFailureRepository.findAll().getFirst();
+        assertEquals("library-events", failure.getTopic());
+        assertTrue(failure.getExceptionClass().contains("ListenerExecutionFailedException"));
+        assertTrue(failure.getStackTrace().contains("LibraryEvent not found for update"));
+
+        try (KafkaConsumer<Integer, String> dltConsumer = createDltConsumer()) {
+            dltConsumer.subscribe(List.of("library-events.DLT"));
+            ConsumerRecord<Integer, String> dltRecord = waitForDltRecord(
+                    dltConsumer,
+                    value -> value.contains("\"libraryEventId\":9999"),
+                    10);
+
+            assertNotNull(dltRecord);
+            assertEquals("library-events.DLT", dltRecord.topic());
+            assertTrue(dltRecord.value().contains("\"libraryEventId\":9999"));
+            assertTrue(dltRecord.value().contains("\"eventType\":\"UPDATE\""));
+        }
     }
 
-    /**
-     * Polls the database until the expected number of LibraryEvent records appear,
-     * or fails after the given timeout.
-     */
+    private KafkaConsumer<Integer, String> createDltConsumer() {
+        Map<String, Object> consumerProps = new HashMap<>();
+        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, embeddedKafkaBroker.getBrokersAsString());
+        consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "dlt-consumer-" + UUID.randomUUID());
+        consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, IntegerDeserializer.class);
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        return new KafkaConsumer<>(consumerProps);
+    }
+
+    private ConsumerRecord<Integer, String> waitForDltRecord(KafkaConsumer<Integer, String> consumer,
+                                                             java.util.function.Predicate<String> valueMatcher,
+                                                             int timeoutSeconds) {
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+        while (System.currentTimeMillis() < deadline) {
+            ConsumerRecords<Integer, String> records = consumer.poll(Duration.ofMillis(250));
+            for (ConsumerRecord<Integer, String> record : records) {
+                if (valueMatcher.test(record.value())) {
+                    return record;
+                }
+            }
+        }
+        fail("Timed out waiting for matching message in library-events.DLT");
+        return null;
+    }
+
     private void waitForRecordCount(long expectedCount, int timeoutSeconds) throws InterruptedException {
-        for (int i = 0; i < timeoutSeconds * 10; i++) {
-            if (libraryEventRepository.count() >= expectedCount) {
-                // Small buffer for remaining DB operations (Book save after LibraryEvent)
-                Thread.sleep(200);
-                return;
-            }
-            Thread.sleep(100);
-        }
-        fail("Timed out waiting for " + expectedCount + " library event(s), found " + libraryEventRepository.count());
+        waitForCondition(() -> libraryEventRepository.count() >= expectedCount,
+                timeoutSeconds,
+                "Timed out waiting for " + expectedCount + " record(s), found " + libraryEventRepository.count());
+        Thread.sleep(200);
     }
 
-    private void waitForFailureRecordCount(long expectedCount, int timeoutSeconds) throws InterruptedException {
+    private void waitForCondition(BooleanSupplier condition,
+                                  int timeoutSeconds,
+                                  String failureMessage) throws InterruptedException {
         for (int i = 0; i < timeoutSeconds * 10; i++) {
-            if (failureRecordRepository.count() >= expectedCount) {
-                Thread.sleep(200);
+            if (condition.getAsBoolean()) {
                 return;
             }
             Thread.sleep(100);
         }
-        fail("Timed out waiting for " + expectedCount + " failure record(s), found " + failureRecordRepository.count());
+        fail(failureMessage);
+    }
+
+    private void assertConditionRemainsTrue(BooleanSupplier condition,
+                                            int durationSeconds,
+                                            String failureMessage) throws InterruptedException {
+        for (int i = 0; i < durationSeconds * 10; i++) {
+            assertTrue(condition.getAsBoolean(), failureMessage);
+            Thread.sleep(100);
+        }
     }
 }
+

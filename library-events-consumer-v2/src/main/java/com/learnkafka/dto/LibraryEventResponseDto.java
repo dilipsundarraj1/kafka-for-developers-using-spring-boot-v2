@@ -5,7 +5,7 @@ import com.learnkafka.domain.LibraryEventType;
 import java.time.LocalDateTime;
 
 public record LibraryEventResponseDto(
-        Long libraryEventId,
+        Integer libraryEventId,
         LibraryEventType eventType,
         BookResponseDto book,
         LocalDateTime createdAt,
