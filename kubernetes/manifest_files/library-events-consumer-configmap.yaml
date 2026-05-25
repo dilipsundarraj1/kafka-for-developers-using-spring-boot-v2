@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: library-events-consumer-config
+  namespace: default
+  labels:
+    app: library-events-consumer
+data:
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://host.docker.internal:5432/mydatabase"
+  SPRING_DATASOURCE_USERNAME: "myuser"
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "host.docker.internal:29092,host.docker.internal:29094,host.docker.internal:29096"
+  SPRING_KAFKA_CONSUMER_GROUP_ID: "library-events-listener-group-kube1"
+  SPRING_PROFILES_ACTIVE: "dev"
+  SERVER_PORT: "8081"
+  LOG_LEVEL: "INFO"

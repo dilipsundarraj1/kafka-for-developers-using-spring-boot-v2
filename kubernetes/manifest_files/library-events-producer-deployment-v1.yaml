@@ -1,0 +1,41 @@
+# deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: library-events-producer
+  labels:
+    app: library-events-producer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: library-events-producer
+  template:                          # ← this is the Pod template
+    metadata:
+      labels:
+        app: library-events-producer
+    spec:
+      containers:
+        - name: library-events-producer
+          image: dilipthelip/library-events-producer:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          env:
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: "host.docker.internal:29092"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

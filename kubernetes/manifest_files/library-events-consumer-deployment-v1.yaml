@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: library-events-consumer
+  labels:
+    app: library-events-consumer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: library-events-consumer
+  template:
+    metadata:
+      labels:
+        app: library-events-consumer
+    spec:
+      containers:
+        - name: library-events-consumer
+          image: dilipthelip/library-events-consumer:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: library-events-consumer-config   # all keys from ConfigMap become env vars
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 30    # wait 30s before first check (Spring Boot needs time to start)
+            periodSeconds: 10          # check every 10s
+            timeoutSeconds: 5          # fail if no response within 5s
+            failureThreshold: 3        # restart container after 3 consecutive failures
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 20    # shorter delay — readiness can start checking sooner
+            periodSeconds: 5           # check every 5s
+            timeoutSeconds: 3          # fail if no response within 3s
+            failureThreshold: 3        # remove from Service after 3 consecutive failures
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

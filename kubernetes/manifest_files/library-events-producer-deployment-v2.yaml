@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: library-events-producer
+  labels:
+    app: library-events-producer
+spec:
+  replicas: 3                          # scale up to 3 instances
+  selector:
+    matchLabels:
+      app: library-events-producer
+  template:
+    metadata:
+      labels:
+        app: library-events-producer
+    spec:
+      containers:
+        - name: library-events-producer
+          image: dilipthelip/library-events-producer:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: "host.docker.internal:29092"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: library-events-producer-v2
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}  # override via env var SPRING_PROFILES_ACTIVE=stage|prod
+  kafka:
+    # bootstrap-servers and topic are set per-profile (see application-{dev|stage|prod}.yml)
+    producer:
+      acks: all
+      retries: 10
+      transaction-id-prefix: lib-events-tx-
+      key-serializer: org.apache.kafka.common.serialization.LongSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # value-serializer: org.apache.kafka.common.serialization.StringSerializer  # switch to this for StringSerializer testing
+      properties:
+        retry.backoff.ms: 1000
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+
+app:
+  api:
+    base-path: /v1/libraryevent
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true               # enables /actuator/health/liveness and /actuator/health/readiness
+        add-additional-paths: true  # also exposes /livez and /readyz at the root
+      show-details: always
+      group:
+        liveness:
+          include: livenessState, kafkaReadiness   # liveness fails when Kafka is unreachable (e.g. due to network issues or broker downtime)
+        readiness:
+          include: readinessState,kafkaReadiness
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info        # only health and info are exposed over HTTP
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

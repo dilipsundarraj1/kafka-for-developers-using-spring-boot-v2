@@ -1,0 +1,7 @@
+spring:
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    topic: library-events
+    producer:
+      transaction-id-prefix: lib-events-tx-dev-
+

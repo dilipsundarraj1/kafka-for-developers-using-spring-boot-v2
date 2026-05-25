@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: library-events-producer
+  labels:
+    app: library-events-producer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: library-events-producer
+  template:
+    metadata:
+      labels:
+        app: library-events-producer
+    spec:
+      containers:
+        - name: library-events-producer
+          image: dilipthelip/library-events-producer:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: library-events-producer-config
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30    # wait 30s before first check (Spring Boot needs time to start)
+            periodSeconds: 10          # check every 10s
+            timeoutSeconds: 5          # fail if no response within 5s
+            failureThreshold: 3        # restart container after 3 consecutive failures
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20    # shorter delay — readiness can start checking sooner
+            periodSeconds: 5           # check every 5s
+            timeoutSeconds: 3          # fail if no response within 3s
+            failureThreshold: 3        # remove from Service after 3 consecutive failures
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

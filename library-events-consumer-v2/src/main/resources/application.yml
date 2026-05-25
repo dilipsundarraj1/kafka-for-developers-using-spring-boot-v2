@@ -1,0 +1,69 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${SPRING_DATASOURCE_URL:localhost}:${SPRING_DATASOURCE_PORT:5432}/${SPRING_DATASOURCE_DB:mydatabase}
+    username: ${SPRING_DATASOURCE_USERNAME:myuser}
+    password: ${SPRING_DATASOURCE_PASSWORD:secret}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  kafka:
+    consumer:
+      bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      group-id: ${SPRING_KAFKA_CONSUMER_GROUP_ID:library-events-listener-group-kube2}
+      key-deserializer: org.apache.kafka.common.serialization.LongDeserializer
+      # value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.learnkafka.domain,com.learnjava.domain
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: com.learnkafka.domain.LibraryEventDTO
+        isolation.level: read_committed
+        auto-offset-reset: latest
+    producer:
+      bootstrap-servers: ${SPRING_KAFKA_PRODUCER_BOOTSTRAP_SERVERS:${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}}
+      key-serializer: org.apache.kafka.common.serialization.LongSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true               # enables /actuator/health/liveness and /actuator/health/readiness
+        add-additional-paths: true  # also exposes /livez and /readyz at the root
+      show-details: always
+      group:
+        liveness:
+          include: livenessState, kafkaReadiness   # liveness fails when Kafka is unreachable (e.g. due to network issues or broker downtime)
+        readiness:
+          include: readinessState,kafkaReadiness
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+
+app:
+  kafka:
+    recovery:
+      mode: both # options: failure-table | dlt | both | log_skip

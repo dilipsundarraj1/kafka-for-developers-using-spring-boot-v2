@@ -1,0 +1,47 @@
+flowchart TB
+    subgraph step1["Step 1: Controller Initializes"]
+        A[Node Starts<br/>process.roles=broker,controller] --> B[Controller Component<br/>Initializes]
+        B --> C[(\_\_cluster_metadata<br/>KRaft Log)]
+        B --> D[Self-Elects as<br/>Active Controller]
+    end
+
+    subgraph step2["Step 2: Broker Registers"]
+        E[Broker Component] -->|Registration| F[Controller Component]
+        F -->|Records| G[(\_\_cluster_metadata<br/>broker registered)]
+        G -->|Confirmation| H[Broker Ready for<br/>Client Connections]
+    end
+
+    subgraph step3["Step 3: Topic Creation"]
+        I[Client<br/>kafka-topics --create] -->|Create Topic| J[Controller]
+        J -->|Decides:<br/>3 partitions<br/>node.id=1 leads all| K[(\_\_cluster_metadata<br/>topic config saved)]
+        K -->|Broker reads update| L[Broker Creates:<br/>my-topic-0/<br/>my-topic-1/<br/>my-topic-2/]
+    end
+
+    subgraph step4["Step 4: Producer Sends Messages"]
+        M[Producer] -->|1. Metadata Request<br/>for my-topic| N[Broker]
+        N <-->|2. Fetch topic info| O[Controller]
+        N -->|3. Metadata Response:<br/>3 partitions<br/>node.id=1 leads all| M
+        M -->|4. Partitioner decides:<br/>hash-key % 3 or sticky| M2[Producer<br/>Partitioner]
+        M2 -->|5. ProduceRequest<br/>to partition-X| N
+        N -->|6. Write Message| P[(Disk<br/>my-topic-X)]
+    end
+
+    subgraph step5["Step 5: Consumer Reads Messages"]
+        Q[Consumer] -->|1. FindCoordinator| R[Broker<br/>Group Coordinator]
+        Q -->|2. JoinGroup request| R
+        R -->|3. Partition assignment<br/>partition-0,1,2 → consumer| Q
+        R -->|Records membership| S[(\_\_consumer_offsets)]
+        Q -->|4. Metadata Request| R
+        R <-->|Fetch topic info| T[Controller]
+        R -->|5. Metadata Response:<br/>node.id=1 leads all| Q
+        Q -->|6. FetchRequest<br/>from offset| R
+        U[(Disk<br/>my-topic-X)] -->|Read messages| R
+        R -->|7. Return messages| Q
+        Q -->|8. OffsetCommit| R
+        R -->|Store offset| S
+    end
+
+    step1 --> step2
+    step2 --> step3
+    step3 --> step4
+    step4 --> step5
