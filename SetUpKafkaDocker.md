@@ -34,6 +34,13 @@ kafka-console-producer --bootstrap-server kafka1:19092 \
                        --topic test-topic
 ```
 
+-- For Window CMD Operating System
+
+```
+docker exec -it kafka1 kafka-console-producer --bootstrap-server kafka1:19092 --topic test-topic
+```
+
+
 - Consume Messages from the topic.
 
 ```
@@ -41,6 +48,12 @@ docker exec --interactive --tty kafka1  \
 kafka-console-consumer --bootstrap-server kafka1:19092 \
                        --topic test-topic \
                        --from-beginning
+```
+
+-- For Window CMD Operating System
+
+```
+docker exec -it kafka1 kafka-console-consumer --bootstrap-server kafka1:19092 --topic test-topic --from-beginning
 ```
 
 ## Producer and Consume the Messages With Key and Value
