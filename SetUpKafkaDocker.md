@@ -8,7 +8,7 @@
 docker-compose up
 ```
 
-## Producer and Consume the Messages
+## Produce and Consume the Messages
 
 - Let's going to the container by running the below command.
 
@@ -43,7 +43,7 @@ kafka-console-consumer --bootstrap-server kafka1:19092 \
                        --from-beginning
 ```
 
-## Producer and Consume the Messages With Key and Value
+## Produce and Consume the Messages With Key and Value
 
 - Produce Messages with Key and Value to the topic.
 
